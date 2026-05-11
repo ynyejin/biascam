@@ -12,6 +12,11 @@ SIMILARITY_THRESHOLD = 0.5
 HISTORY_SIZE = 8
 MAX_LOST_FRAMES = 20
 
+FANCAM_SIZE = (720, 1280)  # width, height
+BBOX_SMOOTH_ALPHA = 0.15
+CROP_SMOOTH_ALPHA = 0.08
+EMBEDDING_UPDATE_ALPHA = 0.05
+
 mp_face_detection = mp.solutions.face_detection
 mp_face_mesh = mp.solutions.face_mesh
 
@@ -19,6 +24,7 @@ clicked_bbox = None
 clicked_done = False
 
 os.makedirs("output", exist_ok=True)
+
 
 def cosine_similarity(a, b):
     a = np.array(a)
@@ -28,6 +34,16 @@ def cosine_similarity(a, b):
         return 0.0
 
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+
+def scale_bbox_to_original(bbox, scale):
+    x, y, w, h = bbox
+    return (
+        int(x / scale),
+        int(y / scale),
+        int(w / scale),
+        int(h / scale)
+    )
 
 
 def crop_face(image, bbox, margin=0.8):
@@ -46,7 +62,7 @@ def crop_face(image, bbox, margin=0.8):
     return image[y1:y2, x1:x2]
 
 
-def make_fancam_crop(frame, bbox, output_size=(720, 1280), padding=4.0):
+def make_fancam_crop(frame, bbox, output_size=FANCAM_SIZE, padding=7.0):
     frame_h, frame_w, _ = frame.shape
     x, y, w, h = bbox
 
@@ -56,7 +72,6 @@ def make_fancam_crop(frame, bbox, output_size=(720, 1280), padding=4.0):
     crop_h = int(h * padding)
     crop_w = int(crop_h * output_size[0] / output_size[1])
 
-    # 얼굴보다 몸이 아래에 있으니까 crop 중심을 아래로 내림
     cy = cy + h * 3.0
 
     x1 = int(cx - crop_w / 2)
@@ -75,7 +90,6 @@ def make_fancam_crop(frame, bbox, output_size=(720, 1280), padding=4.0):
         return None, (x1, y1, x2 - x1, y2 - y1)
 
     crop = cv2.resize(crop, output_size)
-
     return crop, (x1, y1, x2 - x1, y2 - y1)
 
 
@@ -106,8 +120,17 @@ def get_face_embedding(face_img, face_mesh):
         return None
 
     points = points / scale
-
     return points.flatten()
+
+
+def update_reference_embedding(old_embedding, new_embedding, alpha=EMBEDDING_UPDATE_ALPHA):
+    updated = (1 - alpha) * old_embedding + alpha * new_embedding
+    norm = np.linalg.norm(updated)
+
+    if norm == 0:
+        return old_embedding
+
+    return updated / norm
 
 
 def detect_faces(frame, face_detection):
@@ -136,11 +159,9 @@ def detect_faces(frame, face_detection):
         if bw <= 0 or bh <= 0:
             continue
 
-        score = float(detection.score[0])
-
         faces.append({
             "bbox": (x, y, bw, bh),
-            "score": score
+            "score": float(detection.score[0])
         })
 
     return faces
@@ -151,7 +172,7 @@ def bbox_center(bbox):
     return np.array([x + w / 2, y + h / 2])
 
 
-def smooth_bbox(prev_bbox, new_bbox, alpha=0.35):
+def smooth_bbox(prev_bbox, new_bbox, alpha=BBOX_SMOOTH_ALPHA):
     if prev_bbox is None:
         return new_bbox
 
@@ -166,7 +187,7 @@ def smooth_bbox(prev_bbox, new_bbox, alpha=0.35):
     return (x, y, w, h)
 
 
-def smooth_crop_bbox(prev_bbox, new_bbox, alpha=0.18):
+def smooth_crop_bbox(prev_bbox, new_bbox, alpha=CROP_SMOOTH_ALPHA):
     if prev_bbox is None:
         return new_bbox
 
@@ -209,18 +230,24 @@ def select_target_face(cap, face_detection, face_mesh):
     clicked_done = False
 
     while True:
-        ret, frame = cap.read()
+        ret, frame_original = cap.read()
 
         if not ret:
-            print("첫 프레임을 읽을 수 없습니다.")
-            return None, None, None
+            print("선택할 프레임을 읽을 수 없습니다.")
+            return None, None
 
-        frame = cv2.resize(frame, None, fx=DISPLAY_SCALE, fy=DISPLAY_SCALE)
-        faces = detect_faces(frame, face_detection)
+        frame_display = cv2.resize(
+            frame_original,
+            None,
+            fx=DISPLAY_SCALE,
+            fy=DISPLAY_SCALE
+        )
+
+        faces = detect_faces(frame_display, face_detection)
 
         if len(faces) == 0:
             cv2.putText(
-                frame,
+                frame_display,
                 "No face detected. Press any key for next frame / ESC to quit.",
                 (20, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
@@ -229,15 +256,15 @@ def select_target_face(cap, face_detection, face_mesh):
                 2
             )
 
-            cv2.imshow("Select Your Bias", frame)
+            cv2.imshow("Select Your Bias", frame_display)
             key = cv2.waitKey(0)
 
             if key == 27:
-                return None, None, None
+                return None, None
 
             continue
 
-        display = frame.copy()
+        display = frame_display.copy()
 
         for idx, face in enumerate(faces):
             x, y, w, h = face["bbox"]
@@ -270,9 +297,12 @@ def select_target_face(cap, face_detection, face_mesh):
 
             if key == 27:
                 cv2.destroyWindow("Select Your Bias")
-                return None, None, None
+                return None, None
 
-        selected_crop = crop_face(frame, clicked_bbox)
+        selected_bbox_display = clicked_bbox
+        selected_bbox_original = scale_bbox_to_original(selected_bbox_display, DISPLAY_SCALE)
+
+        selected_crop = crop_face(frame_original, selected_bbox_original)
         reference_embedding = get_face_embedding(selected_crop, face_mesh)
 
         if reference_embedding is None:
@@ -282,7 +312,7 @@ def select_target_face(cap, face_detection, face_mesh):
             continue
 
         cv2.destroyWindow("Select Your Bias")
-        return clicked_bbox, reference_embedding, frame
+        return selected_bbox_original, reference_embedding
 
 
 def run_face_matching(video_path):
@@ -291,6 +321,10 @@ def run_face_matching(video_path):
     if not cap.isOpened():
         print("영상을 열 수 없습니다.")
         return
+
+    original_fps = cap.get(cv2.CAP_PROP_FPS)
+    if original_fps == 0:
+        original_fps = 30
 
     last_bbox = None
     lost_frames = 0
@@ -305,7 +339,7 @@ def run_face_matching(video_path):
         refine_landmarks=True
     ) as face_mesh:
 
-        selected_bbox, reference_embedding, selected_frame = select_target_face(
+        selected_bbox, reference_embedding = select_target_face(
             cap,
             face_detection,
             face_mesh
@@ -316,27 +350,36 @@ def run_face_matching(video_path):
             cv2.destroyAllWindows()
             return
 
+        # 선택 과정에서 지나간 프레임을 다시 처음부터 처리
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
         last_bbox = selected_bbox
 
-        # VideoWriter 관련 변수
         fancam_writer = None
         crop_bbox = None
 
         while True:
-            ret, frame = cap.read()
+            ret, frame_original = cap.read()
 
             if not ret:
                 break
 
-            frame = cv2.resize(frame, None, fx=DISPLAY_SCALE, fy=DISPLAY_SCALE)
+            frame_display = cv2.resize(
+                frame_original,
+                None,
+                fx=DISPLAY_SCALE,
+                fy=DISPLAY_SCALE
+            )
 
-            faces = detect_faces(frame, face_detection)
+            faces_display = detect_faces(frame_display, face_detection)
 
             candidates = []
 
-            for face in faces:
-                bbox = face["bbox"]
-                face_crop = crop_face(frame, bbox)
+            for face in faces_display:
+                bbox_display = face["bbox"]
+                bbox_original = scale_bbox_to_original(bbox_display, DISPLAY_SCALE)
+
+                face_crop = crop_face(frame_original, bbox_original)
                 embedding = get_face_embedding(face_crop, face_mesh)
 
                 if embedding is None:
@@ -347,16 +390,18 @@ def run_face_matching(video_path):
                 distance_bonus = 0.0
 
                 if last_bbox is not None:
-                    current_center = bbox_center(bbox)
+                    current_center = bbox_center(bbox_original)
                     previous_center = bbox_center(last_bbox)
                     distance = np.linalg.norm(current_center - previous_center)
 
-                    distance_bonus = max(0.0, 0.20 - distance / 600)
+                    distance_bonus = max(0.0, 0.20 - distance / 850)
 
                 final_score = similarity + distance_bonus
 
                 candidates.append({
-                    "bbox": bbox,
+                    "bbox_original": bbox_original,
+                    "bbox_display": bbox_display,
+                    "embedding": embedding,
                     "similarity": similarity,
                     "final_score": final_score
                 })
@@ -367,7 +412,9 @@ def run_face_matching(video_path):
                 best_candidate = max(candidates, key=lambda c: c["final_score"])
 
             selected_bbox = None
+            selected_bbox_display = None
             selected_similarity = None
+            selected_embedding = None
 
             if best_candidate is not None:
                 raw_similarity = best_candidate["similarity"]
@@ -376,8 +423,10 @@ def run_face_matching(video_path):
                 avg_similarity = np.mean(similarity_history)
 
                 if raw_similarity >= SIMILARITY_THRESHOLD or avg_similarity >= SIMILARITY_THRESHOLD:
-                    selected_bbox = best_candidate["bbox"]
+                    selected_bbox = best_candidate["bbox_original"]
+                    selected_bbox_display = best_candidate["bbox_display"]
                     selected_similarity = raw_similarity
+                    selected_embedding = best_candidate["embedding"]
                     lost_frames = 0
                 else:
                     lost_frames += 1
@@ -388,103 +437,88 @@ def run_face_matching(video_path):
                 selected_bbox = last_bbox
                 selected_similarity = np.mean(similarity_history) if similarity_history else 0.0
 
-            # 재탐색 로직 추가
-            if lost_frames > MAX_LOST_FRAMES and faces:
+            if lost_frames > MAX_LOST_FRAMES and candidates:
                 print("재탐색 시도")
 
-                best_recovery = None
-                best_score = -1
-
-                for face in faces:
-                    bbox = face["bbox"]
-
-                    face_crop = crop_face(frame, bbox)
-                    embedding = get_face_embedding(face_crop, face_mesh)
-
-                    if embedding is None:
-                        continue
-
-                    similarity = cosine_similarity(reference_embedding, embedding)
-
-                    # 거리 + similarity 같이 고려
-                    if last_bbox is not None:
-                        dist = np.linalg.norm(bbox_center(bbox) - bbox_center(last_bbox))
-                        score = similarity - dist / 800
-                    else:
-                        score = similarity
-
-                    if score > best_score:
-                        best_score = score
-                        best_recovery = bbox
+                best_recovery = max(candidates, key=lambda c: c["final_score"])
 
                 if best_recovery is not None:
                     print("재탐색 성공")
-                    last_bbox = best_recovery
-                    selected_bbox = best_recovery
+                    selected_bbox = best_recovery["bbox_original"]
+                    selected_similarity = best_recovery["similarity"]
+                    selected_embedding = best_recovery["embedding"]
                     lost_frames = 0
 
             if selected_bbox is not None:
-                selected_bbox = smooth_bbox(last_bbox, selected_bbox, alpha=0.15)
+                selected_bbox = smooth_bbox(last_bbox, selected_bbox)
                 last_bbox = selected_bbox
 
-                # 자동 직캠 crop 생성
-                fancam_frame = None
+                if selected_embedding is not None and selected_similarity is not None:
+                    if selected_similarity > 0.7:
+                        reference_embedding = update_reference_embedding(
+                            reference_embedding,
+                            selected_embedding
+                        )
 
-                if selected_bbox is not None:
-                    raw_crop, raw_crop_bbox = make_fancam_crop(
-                        frame,
-                        selected_bbox,
-                        output_size=(720, 1280),
-                        padding=7.0
-                    )
+                raw_crop, raw_crop_bbox = make_fancam_crop(
+                    frame_original,
+                    selected_bbox,
+                    output_size=FANCAM_SIZE,
+                    padding=7.0
+                )
 
-                    crop_bbox = smooth_crop_bbox(crop_bbox, raw_crop_bbox, alpha=0.08)
+                crop_bbox = smooth_crop_bbox(crop_bbox, raw_crop_bbox)
 
-                    x, y, w, h = crop_bbox
-                    x2 = min(frame.shape[1], x + w)
-                    y2 = min(frame.shape[0], y + h)
-                    x = max(0, x)
-                    y = max(0, y)
+                x, y, w, h = crop_bbox
+                x = max(0, x)
+                y = max(0, y)
+                x2 = min(frame_original.shape[1], x + w)
+                y2 = min(frame_original.shape[0], y + h)
 
-                    crop = frame[y:y2, x:x2]
+                crop = frame_original[y:y2, x:x2]
 
-                    if crop.size != 0:
-                        fancam_frame = cv2.resize(crop, (720, 1280))
+                if crop.size != 0:
+                    fancam_frame = cv2.resize(crop, FANCAM_SIZE)
 
-                        if fancam_writer is None:
-                            fps = cap.get(cv2.CAP_PROP_FPS)
-                            if fps == 0:
-                                fps = 30
+                    if fancam_writer is None:
+                        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                        fancam_writer = cv2.VideoWriter(
+                            OUTPUT_FANCAM_PATH,
+                            fourcc,
+                            original_fps,
+                            FANCAM_SIZE
+                        )
 
-                            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                            fancam_writer = cv2.VideoWriter(
-                                OUTPUT_FANCAM_PATH,
-                                fourcc,
-                                fps,
-                                (720, 1280)
-                            )
+                    fancam_writer.write(fancam_frame)
 
-                        fancam_writer.write(fancam_frame)
+                    # 표시용 crop box는 display scale로 변환해서 그림
+                    dx1 = int(x * DISPLAY_SCALE)
+                    dy1 = int(y * DISPLAY_SCALE)
+                    dx2 = int(x2 * DISPLAY_SCALE)
+                    dy2 = int(y2 * DISPLAY_SCALE)
+                    cv2.rectangle(frame_display, (dx1, dy1), (dx2, dy2), (255, 200, 0), 2)
 
-                        cv2.rectangle(frame, (x, y), (x2, y2), (255, 200, 0), 2)
-
-            for face in faces:
+            for face in faces_display:
                 x, y, w, h = face["bbox"]
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (120, 120, 120), 1)
+                cv2.rectangle(frame_display, (x, y), (x + w, y + h), (120, 120, 120), 1)
 
-            if selected_bbox is not None:
-                x, y, w, h = selected_bbox
+            if last_bbox is not None:
+                x, y, w, h = last_bbox
+                dx = int(x * DISPLAY_SCALE)
+                dy = int(y * DISPLAY_SCALE)
+                dw = int(w * DISPLAY_SCALE)
+                dh = int(h * DISPLAY_SCALE)
 
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 3)
+                cv2.rectangle(frame_display, (dx, dy), (dx + dw, dy + dh), (0, 255, 0), 3)
 
                 label = "BIAS"
                 if selected_similarity is not None:
                     label += f" {selected_similarity:.2f}"
 
                 cv2.putText(
-                    frame,
+                    frame_display,
                     label,
-                    (x, max(20, y - 10)),
+                    (dx, max(20, dy - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.6,
                     (0, 255, 0),
@@ -492,8 +526,8 @@ def run_face_matching(video_path):
                 )
 
             cv2.putText(
-                frame,
-                f"faces: {len(faces)} | lost: {lost_frames}",
+                frame_display,
+                f"faces: {len(faces_display)} | lost: {lost_frames}",
                 (20, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
@@ -501,7 +535,7 @@ def run_face_matching(video_path):
                 2
             )
 
-            cv2.imshow("Bias Tracking - Click Initialized", frame)
+            cv2.imshow("Bias Tracking - Original Quality Fancam", frame_display)
 
             if cv2.waitKey(1) & 0xFF == 27:
                 break
