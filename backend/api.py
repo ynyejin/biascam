@@ -1,10 +1,12 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 import os
 import shutil
 import cv2
+import subprocess
 import mediapipe as mp
 
 app = FastAPI()
@@ -31,6 +33,8 @@ app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 
 mp_face_detection = mp.solutions.face_detection
 
+class ProcessRequest(BaseModel):
+    face_id: int
 
 @app.get("/")
 def root():
@@ -158,4 +162,35 @@ def detect_faces_from_video():
         "message": "faces detected",
         "count": len(faces_result),
         "faces": faces_result
+    }
+
+@app.post("/process")
+def process_video(request: ProcessRequest):
+
+    selected_face_id = request.face_id
+
+    print(f"Selected face id: {selected_face_id}")
+
+    # 선택된 얼굴 id 저장
+    with open("selected_face.txt", "w") as f:
+        f.write(str(selected_face_id))
+
+    # 직캠 생성
+    subprocess.run(
+        ["python", "src/tracking/face_match.py"],
+        check=True
+    )
+
+    # 안무 분석
+    subprocess.run(
+        ["python", "src/analysis/analyze_motion.py"],
+        check=True
+    )
+
+    return {
+        "message": "processing complete",
+        "fancam_url": "http://127.0.0.1:8000/output/fancam.mp4",
+        "energy_graph": "http://127.0.0.1:8000/output/analysis/energy_graph.png",
+        "angle_graph": "http://127.0.0.1:8000/output/analysis/angle_graph.png",
+        "trajectory_graph": "http://127.0.0.1:8000/output/analysis/trajectory_3d.png",
     }

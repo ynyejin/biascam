@@ -4,7 +4,7 @@ import mediapipe as mp
 import numpy as np
 from collections import deque
 
-VIDEO_PATH = "data/input/test.mp4"
+VIDEO_PATH = "data/input/uploaded_video.mp4"
 OUTPUT_FANCAM_PATH = "output/fancam.mp4"
 
 DISPLAY_SCALE = 0.7
@@ -224,17 +224,29 @@ def mouse_callback(event, x, y, flags, param):
 
 
 def select_target_face(cap, face_detection, face_mesh):
-    global clicked_bbox, clicked_done
+    selected_face_file = "selected_face.txt"
 
-    clicked_bbox = None
-    clicked_done = False
+    if not os.path.exists(selected_face_file):
+        print("selected_face.txt 파일이 없습니다.")
+        return None, None
 
-    while True:
+    with open(selected_face_file, "r") as f:
+        selected_face_id = int(f.read().strip())
+
+    print(f"프론트에서 선택한 face_id: {selected_face_id}")
+
+    frame_idx = 0
+    max_scan_frames = 300
+    selected_frame = None
+    selected_faces = []
+
+    while frame_idx < max_scan_frames:
         ret, frame_original = cap.read()
 
         if not ret:
-            print("선택할 프레임을 읽을 수 없습니다.")
-            return None, None
+            break
+
+        frame_idx += 1
 
         frame_display = cv2.resize(
             frame_original,
@@ -243,76 +255,34 @@ def select_target_face(cap, face_detection, face_mesh):
             fy=DISPLAY_SCALE
         )
 
-        faces = detect_faces(frame_display, face_detection)
+        faces_display = detect_faces(frame_display, face_detection)
 
-        if len(faces) == 0:
-            cv2.putText(
-                frame_display,
-                "No face detected. Press any key for next frame / ESC to quit.",
-                (20, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2
-            )
+        if len(faces_display) > len(selected_faces):
+            selected_faces = faces_display
+            selected_frame = frame_original.copy()
 
-            cv2.imshow("Select Your Bias", frame_display)
-            key = cv2.waitKey(0)
+    if selected_frame is None or len(selected_faces) == 0:
+        print("영상에서 얼굴 후보를 찾지 못했습니다.")
+        return None, None
 
-            if key == 27:
-                return None, None
+    if selected_face_id < 0 or selected_face_id >= len(selected_faces):
+        print("선택한 face_id가 얼굴 후보 범위를 벗어났습니다.")
+        return None, None
 
-            continue
+    selected_bbox_display = selected_faces[selected_face_id]["bbox"]
+    selected_bbox_original = scale_bbox_to_original(
+        selected_bbox_display,
+        DISPLAY_SCALE
+    )
 
-        display = frame_display.copy()
+    selected_crop = crop_face(selected_frame, selected_bbox_original)
+    reference_embedding = get_face_embedding(selected_crop, face_mesh)
 
-        for idx, face in enumerate(faces):
-            x, y, w, h = face["bbox"]
-            cv2.rectangle(display, (x, y), (x + w, y + h), (120, 120, 120), 2)
-            cv2.putText(
-                display,
-                f"Face {idx}",
-                (x, max(20, y - 10)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (120, 120, 120),
-                2
-            )
+    if reference_embedding is None:
+        print("선택한 얼굴에서 embedding 추출 실패")
+        return None, None
 
-        cv2.putText(
-            display,
-            "Click your bias face. ESC: quit",
-            (20, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 255, 255),
-            2
-        )
-
-        cv2.imshow("Select Your Bias", display)
-        cv2.setMouseCallback("Select Your Bias", mouse_callback, {"faces": faces})
-
-        while not clicked_done:
-            key = cv2.waitKey(1) & 0xFF
-
-            if key == 27:
-                cv2.destroyWindow("Select Your Bias")
-                return None, None
-
-        selected_bbox_display = clicked_bbox
-        selected_bbox_original = scale_bbox_to_original(selected_bbox_display, DISPLAY_SCALE)
-
-        selected_crop = crop_face(frame_original, selected_bbox_original)
-        reference_embedding = get_face_embedding(selected_crop, face_mesh)
-
-        if reference_embedding is None:
-            print("선택한 얼굴에서 embedding 추출 실패. 다른 프레임/얼굴을 선택하세요.")
-            clicked_bbox = None
-            clicked_done = False
-            continue
-
-        cv2.destroyWindow("Select Your Bias")
-        return selected_bbox_original, reference_embedding
+    return selected_bbox_original, reference_embedding
 
 
 def run_face_matching(video_path):
