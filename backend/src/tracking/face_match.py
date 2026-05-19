@@ -505,17 +505,10 @@ def run_face_matching(video_path):
                 2
             )
 
-            cv2.imshow("Bias Tracking - Original Quality Fancam", frame_display)
-
-            if cv2.waitKey(1) & 0xFF == 27:
-                break
-
     if fancam_writer is not None:
         fancam_writer.release()
 
     cap.release()
-    cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     run_face_matching(VIDEO_PATH)

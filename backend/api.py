@@ -33,6 +33,19 @@ app.mount("/output", StaticFiles(directory=OUTPUT_DIR), name="output")
 
 mp_face_detection = mp.solutions.face_detection
 
+process_status = {
+    "progress": 0,
+    "message": "Waiting",
+    "done": False,
+    "error": None
+}
+
+def update_status(progress, message, done=False, error=None):
+    process_status["progress"] = progress
+    process_status["message"] = message
+    process_status["done"] = done
+    process_status["error"] = error
+
 class ProcessRequest(BaseModel):
     face_id: int
 
@@ -164,33 +177,63 @@ def detect_faces_from_video():
         "faces": faces_result
     }
 
+
+@app.get("/progress")
+def get_progress():
+    return process_status
+
+
 @app.post("/process")
 def process_video(request: ProcessRequest):
+    try:
+        update_status(5, "Selected face received")
 
-    selected_face_id = request.face_id
+        selected_face_id = request.face_id
 
-    print(f"Selected face id: {selected_face_id}")
+        with open("selected_face.txt", "w") as f:
+            f.write(str(selected_face_id))
 
-    # 선택된 얼굴 id 저장
-    with open("selected_face.txt", "w") as f:
-        f.write(str(selected_face_id))
+        update_status(25, "Generating fancam")
 
-    # 직캠 생성
-    subprocess.run(
-        ["python", "src/tracking/face_match.py"],
-        check=True
-    )
+        subprocess.run(
+            ["python", "src/tracking/face_match.py"],
+            check=True
+        )
 
-    # 안무 분석
-    subprocess.run(
-        ["python", "src/analysis/analyze_motion.py"],
-        check=True
-    )
+        update_status(55, "Converting video for web playback")
 
-    return {
-        "message": "processing complete",
-        "fancam_url": "http://127.0.0.1:8000/output/fancam.mp4",
-        "energy_graph": "http://127.0.0.1:8000/output/analysis/energy_graph.png",
-        "angle_graph": "http://127.0.0.1:8000/output/analysis/angle_graph.png",
-        "trajectory_graph": "http://127.0.0.1:8000/output/analysis/trajectory_3d.png",
-    }
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i", "output/fancam.mp4",
+                "-vcodec", "libx264",
+                "-pix_fmt", "yuv420p",
+                "output/fancam_web.mp4"
+            ],
+            check=True
+        )
+
+        update_status(75, "Running motion analysis")
+
+        subprocess.run(
+            ["python", "src/analysis/analyze_motion.py"],
+            check=True
+        )
+
+        update_status(100, "Complete", done=True)
+
+        return {
+            "message": "processing complete",
+            "fancam_url": "http://127.0.0.1:8000/output/fancam_web.mp4",
+            "energy_graph": "http://127.0.0.1:8000/output/analysis/energy_graph.png",
+            "angle_graph": "http://127.0.0.1:8000/output/analysis/angle_graph.png",
+            "trajectory_graph": "http://127.0.0.1:8000/output/analysis/trajectory_3d.png",
+        }
+
+    except Exception as e:
+        update_status(100, "Processing failed", done=True, error=str(e))
+        return {
+            "message": "processing failed",
+            "error": str(e)
+        }
