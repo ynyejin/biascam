@@ -97,7 +97,6 @@ export default function Home() {
         return (
           <UploadPage
             onUpload={() => goToPage("selection")}
-            onBack={() => goToPage("landing")}
           />
         )
 

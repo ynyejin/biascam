@@ -237,3 +237,66 @@ def process_video(request: ProcessRequest):
             "message": "processing failed",
             "error": str(e)
         }
+    
+@app.get("/analysis-results")
+def get_analysis_results():
+    report_path = "output/analysis/motion_report.txt"
+
+    report_text = ""
+
+    if os.path.exists(report_path):
+        with open(report_path, "r", encoding="utf-8") as f:
+            report_text = f.read()
+
+    return {
+        "message": "analysis results",
+        "energy_graph": "http://127.0.0.1:8000/output/analysis/energy_graph.png",
+        "angle_graph": "http://127.0.0.1:8000/output/analysis/angle_graph.png",
+        "trajectory_graph": "http://127.0.0.1:8000/output/analysis/trajectory_3d.png",
+        "report": report_text
+    }
+
+@app.get("/analysis-data")
+def get_analysis_data():
+    import csv
+
+    energy_data = []
+    angle_data = []
+    trajectory_data = []
+
+    with open("output/analysis/energy_data.csv", "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            energy_data.append({
+                "time": float(row["time"]),
+                "upper_energy": float(row["upper_energy"]),
+                "lower_energy": float(row["lower_energy"]),
+                "total_energy": float(row["total_energy"]),
+            })
+
+    with open("output/analysis/angle_data.csv", "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            angle_data.append({
+                "time": float(row["time"]),
+                "joint": row["joint"],
+                "angle": float(row["angle"]),
+            })
+
+    with open("output/analysis/pose_data.csv", "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if row["joint"] in ["left_wrist", "right_wrist", "left_ankle", "right_ankle"]:
+                trajectory_data.append({
+                    "time": float(row["time"]),
+                    "joint": row["joint"],
+                    "x": float(row["x"]),
+                    "y": float(row["y"]),
+                    "z": float(row["z"]),
+                })
+
+    return {
+        "energy_data": energy_data,
+        "angle_data": angle_data,
+        "trajectory_data": trajectory_data,
+    }
