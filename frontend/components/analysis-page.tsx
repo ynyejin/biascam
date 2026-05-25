@@ -1,5 +1,6 @@
 "use client"
 
+import dynamic from "next/dynamic"
 import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import {
@@ -74,10 +75,14 @@ interface AngleChartRow {
 export function AnalysisPage({ onBack }: AnalysisPageProps) {
   const [energyData, setEnergyData] = useState<EnergyRow[]>([])
   const [angleData, setAngleData] = useState<AngleChartRow[]>([])
-  const [trajectoryGraph, setTrajectoryGraph] = useState<string>("")
+  const [trajectoryData, setTrajectoryData] = useState<TrajectoryRow[]>([])
   const [report, setReport] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const Plot = dynamic(() => import("react-plotly.js"), {
+    ssr: false,
+  })
 
   useEffect(() => {
     const fetchAnalysis = async () => {
@@ -130,7 +135,7 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
 
         setEnergyData(formattedEnergyData)
         setAngleData(Object.values(groupedAngles))
-        setTrajectoryGraph(result.trajectory_graph)
+        setTrajectoryData(data.trajectory_data)
         setReport(result.report)
       } catch (err) {
         console.error(err)
@@ -446,11 +451,89 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
                 3D Movement Trajectory
               </h3>
               <div className="h-64 flex items-center justify-center relative overflow-hidden rounded-lg bg-secondary/30">
-                {trajectoryGraph ? (
-                  <img
-                    src={trajectoryGraph}
-                    alt="3D Movement Trajectory"
-                    className="w-full h-full object-contain rounded-lg"
+                {trajectoryData.length > 0 ? (
+                  <Plot
+                    data={[
+                      {
+                        name: "Left Wrist",
+                        x: trajectoryData.filter((p) => p.joint === "left_wrist").map((p) => p.x),
+                        y: trajectoryData.filter((p) => p.joint === "left_wrist").map((p) => p.y),
+                        z: trajectoryData.filter((p) => p.joint === "left_wrist").map((p) => p.z),
+                        type: "scatter3d",
+                        mode: "lines",
+                        line: { width: 6, color: "#ff6b9d" },
+                      },
+                      {
+                        name: "Right Wrist",
+                        x: trajectoryData.filter((p) => p.joint === "right_wrist").map((p) => p.x),
+                        y: trajectoryData.filter((p) => p.joint === "right_wrist").map((p) => p.y),
+                        z: trajectoryData.filter((p) => p.joint === "right_wrist").map((p) => p.z),
+                        type: "scatter3d",
+                        mode: "lines",
+                        line: { width: 6, color: "#4ecdc4" },
+                      },
+                      {
+                        name: "Left Ankle",
+                        x: trajectoryData.filter((p) => p.joint === "left_ankle").map((p) => p.x),
+                        y: trajectoryData.filter((p) => p.joint === "left_ankle").map((p) => p.y),
+                        z: trajectoryData.filter((p) => p.joint === "left_ankle").map((p) => p.z),
+                        type: "scatter3d",
+                        mode: "lines",
+                        line: { width: 6, color: "#ffd93d" },
+                      },
+                      {
+                        name: "Right Ankle",
+                        x: trajectoryData.filter((p) => p.joint === "right_ankle").map((p) => p.x),
+                        y: trajectoryData.filter((p) => p.joint === "right_ankle").map((p) => p.y),
+                        z: trajectoryData.filter((p) => p.joint === "right_ankle").map((p) => p.z),
+                        type: "scatter3d",
+                        mode: "lines",
+                        line: { width: 6, color: "#a78bfa" },
+                      },
+                    ]}
+                    layout={{
+                      paper_bgcolor: "rgba(0,0,0,0)",
+                      plot_bgcolor: "rgba(0,0,0,0)",
+
+                      scene: {
+                        bgcolor: "rgba(0,0,0,0)",
+
+                        xaxis: {
+                          color: "white",
+                        },
+
+                        yaxis: {
+                          color: "white",
+                        },
+
+                        zaxis: {
+                          color: "white",
+                        },
+
+                        camera: {
+                          eye: {
+                            x: 1.5,
+                            y: 1.5,
+                            z: 1,
+                          },
+                        },
+                      },
+
+                      margin: {
+                        l: 0,
+                        r: 0,
+                        t: 0,
+                        b: 0,
+                      },
+                    }}
+                    config={{
+                      displaylogo: false,
+                      responsive: true,
+                    }}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                    }}
                   />
                 ) : (
                   <p className="text-xs text-muted-foreground">
