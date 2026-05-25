@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { motion } from "framer-motion"
 import { ArrowLeft, Check, Loader2, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -24,9 +24,12 @@ export function FaceSelectionPage({ onSelect, onBack }: FaceSelectionPageProps) 
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const hasFetchedRef = useRef(false)
+
   const fetchDetectedFaces = async () => {
     setIsLoading(true)
     setError(null)
+    setFaces([])
 
     try {
       const response = await fetch("http://127.0.0.1:8000/detect-faces", {
@@ -34,7 +37,7 @@ export function FaceSelectionPage({ onSelect, onBack }: FaceSelectionPageProps) 
       })
 
       if (!response.ok) {
-        throw new Error("Face detection failed")
+        throw new Error(`Face detection failed: ${response.status}`)
       }
 
       const data = await response.json()
@@ -47,7 +50,8 @@ export function FaceSelectionPage({ onSelect, onBack }: FaceSelectionPageProps) 
         setFaces(data.faces)
       }
     } catch (err) {
-      console.error(err)
+      console.error("Failed to detect faces:", err)
+      setFaces([])
       setError("얼굴 후보를 불러오지 못했습니다. 백엔드 서버를 확인해주세요.")
     } finally {
       setIsLoading(false)
@@ -55,8 +59,17 @@ export function FaceSelectionPage({ onSelect, onBack }: FaceSelectionPageProps) 
   }
 
   useEffect(() => {
+    if (hasFetchedRef.current) return
+
+    hasFetchedRef.current = true
     fetchDetectedFaces()
   }, [])
+
+  const handleRetryDetection = () => {
+    hasFetchedRef.current = false
+    fetchDetectedFaces()
+    hasFetchedRef.current = true
+  }
 
   const handleSelect = (id: number) => {
     setSelectedId(id)
@@ -98,8 +111,9 @@ export function FaceSelectionPage({ onSelect, onBack }: FaceSelectionPageProps) 
           </span>
           ?
         </h2>
+
         <p className="text-muted-foreground text-lg">
-          Select your favorite member from the detected faces
+          Select the clearest face candidate for your favorite member
         </p>
       </motion.div>
 
@@ -129,7 +143,7 @@ export function FaceSelectionPage({ onSelect, onBack }: FaceSelectionPageProps) 
               Upload Again
             </Button>
 
-            <Button onClick={fetchDetectedFaces}>
+            <Button onClick={handleRetryDetection}>
               <RefreshCw className="w-4 h-4 mr-2" />
               Retry Detection
             </Button>
@@ -192,10 +206,10 @@ export function FaceSelectionPage({ onSelect, onBack }: FaceSelectionPageProps) 
 
                 <div className="absolute bottom-0 left-0 right-0 p-4 text-left">
                   <p className="text-white font-semibold text-lg">
-                    Member {face.id + 1}
+                    Candidate {index + 1}
                   </p>
                   <p className="text-white/60 text-sm">
-                    Confidence {(face.score * 100).toFixed(1)}%
+                    Score {(face.score * 100).toFixed(1)}%
                   </p>
                 </div>
 
@@ -233,7 +247,7 @@ export function FaceSelectionPage({ onSelect, onBack }: FaceSelectionPageProps) 
             animate={{ opacity: 1 }}
             transition={{ delay: 0.8 }}
           >
-            Detected {faces.length} faces. Choose the member you want to track.
+            Detected {faces.length} face candidates. Choose the clearest image of your bias.
           </motion.p>
         </>
       )}

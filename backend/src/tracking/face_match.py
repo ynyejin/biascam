@@ -2,19 +2,20 @@ import os
 import cv2
 import mediapipe as mp
 import numpy as np
+import json
 from collections import deque
 
 VIDEO_PATH = "data/input/uploaded_video.mp4"
 OUTPUT_FANCAM_PATH = "output/fancam.mp4"
 
 DISPLAY_SCALE = 0.7
-SIMILARITY_THRESHOLD = 0.5
+SIMILARITY_THRESHOLD = 0.58
 HISTORY_SIZE = 8
 MAX_LOST_FRAMES = 20
 
 FANCAM_SIZE = (720, 1280)  # width, height
-BBOX_SMOOTH_ALPHA = 0.15
-CROP_SMOOTH_ALPHA = 0.08
+BBOX_SMOOTH_ALPHA = 0.13
+CROP_SMOOTH_ALPHA = 0.06
 EMBEDDING_UPDATE_ALPHA = 0.05
 
 mp_face_detection = mp.solutions.face_detection
@@ -62,7 +63,7 @@ def crop_face(image, bbox, margin=0.8):
     return image[y1:y2, x1:x2]
 
 
-def make_fancam_crop(frame, bbox, output_size=FANCAM_SIZE, padding=7.0):
+def make_fancam_crop(frame, bbox, output_size=FANCAM_SIZE, padding=8.0):
     frame_h, frame_w, _ = frame.shape
     x, y, w, h = bbox
 
@@ -223,67 +224,114 @@ def mouse_callback(event, x, y, flags, param):
                 break
 
 
+# def select_target_face(cap, face_detection, face_mesh):
+#     selected_face_file = "selected_face.txt"
+
+#     if not os.path.exists(selected_face_file):
+#         print("selected_face.txt 파일이 없습니다.")
+#         return None, None
+
+#     with open(selected_face_file, "r") as f:
+#         selected_face_id = int(f.read().strip())
+
+#     print(f"프론트에서 선택한 face_id: {selected_face_id}")
+
+#     frame_idx = 0
+#     max_scan_frames = 300
+#     selected_frame = None
+#     selected_faces = []
+
+#     while frame_idx < max_scan_frames:
+#         ret, frame_original = cap.read()
+
+#         if not ret:
+#             break
+
+#         frame_idx += 1
+
+#         frame_display = cv2.resize(
+#             frame_original,
+#             None,
+#             fx=DISPLAY_SCALE,
+#             fy=DISPLAY_SCALE
+#         )
+
+#         faces_display = detect_faces(frame_display, face_detection)
+
+#         if len(faces_display) > len(selected_faces):
+#             selected_faces = faces_display
+#             selected_frame = frame_original.copy()
+
+#     if selected_frame is None or len(selected_faces) == 0:
+#         print("영상에서 얼굴 후보를 찾지 못했습니다.")
+#         return None, None
+
+#     if selected_face_id < 0 or selected_face_id >= len(selected_faces):
+#         print("선택한 face_id가 얼굴 후보 범위를 벗어났습니다.")
+#         return None, None
+
+#     selected_bbox_display = selected_faces[selected_face_id]["bbox"]
+#     selected_bbox_original = scale_bbox_to_original(
+#         selected_bbox_display,
+#         DISPLAY_SCALE
+#     )
+
+#     selected_crop = crop_face(selected_frame, selected_bbox_original)
+#     reference_embedding = get_face_embedding(selected_crop, face_mesh)
+
+#     if reference_embedding is None:
+#         print("선택한 얼굴에서 embedding 추출 실패")
+#         return None, None
+
+#     return selected_bbox_original, reference_embedding
+
+def crop_upper_face_region(image, bbox):
+    x, y, w, h = bbox
+
+    face_h = int(h * 0.35)
+
+    return image[
+        y:y + face_h,
+        x:x + w
+    ]
+
+
 def select_target_face(cap, face_detection, face_mesh):
-    selected_face_file = "selected_face.txt"
 
-    if not os.path.exists(selected_face_file):
-        print("selected_face.txt 파일이 없습니다.")
+    selected_file = "selected_member.json"
+
+    if not os.path.exists(selected_file):
+        print("selected_member.json 없음")
         return None, None
 
-    with open(selected_face_file, "r") as f:
-        selected_face_id = int(f.read().strip())
+    with open(selected_file, "r") as f:
+        selected = json.load(f)
 
-    print(f"프론트에서 선택한 face_id: {selected_face_id}")
+    selected_bbox = tuple(selected["bbox"])
 
-    frame_idx = 0
-    max_scan_frames = 300
-    selected_frame = None
-    selected_faces = []
+    ret, frame = cap.read()
 
-    while frame_idx < max_scan_frames:
-        ret, frame_original = cap.read()
-
-        if not ret:
-            break
-
-        frame_idx += 1
-
-        frame_display = cv2.resize(
-            frame_original,
-            None,
-            fx=DISPLAY_SCALE,
-            fy=DISPLAY_SCALE
-        )
-
-        faces_display = detect_faces(frame_display, face_detection)
-
-        if len(faces_display) > len(selected_faces):
-            selected_faces = faces_display
-            selected_frame = frame_original.copy()
-
-    if selected_frame is None or len(selected_faces) == 0:
-        print("영상에서 얼굴 후보를 찾지 못했습니다.")
+    if not ret:
         return None, None
 
-    if selected_face_id < 0 or selected_face_id >= len(selected_faces):
-        print("선택한 face_id가 얼굴 후보 범위를 벗어났습니다.")
-        return None, None
-
-    selected_bbox_display = selected_faces[selected_face_id]["bbox"]
-    selected_bbox_original = scale_bbox_to_original(
-        selected_bbox_display,
-        DISPLAY_SCALE
+    face_crop = crop_upper_face_region(
+        frame,
+        selected_bbox
     )
 
-    selected_crop = crop_face(selected_frame, selected_bbox_original)
-    reference_embedding = get_face_embedding(selected_crop, face_mesh)
+    embedding = get_face_embedding(
+        face_crop,
+        face_mesh
+    )
 
-    if reference_embedding is None:
-        print("선택한 얼굴에서 embedding 추출 실패")
-        return None, None
+    if embedding is None:
 
-    return selected_bbox_original, reference_embedding
+        print("상단 얼굴 embedding 실패")
 
+        # fallback
+        embedding = np.ones(1404)
+
+    return selected_bbox, embedding
 
 def run_face_matching(video_path):
     cap = cv2.VideoCapture(video_path)
@@ -364,7 +412,7 @@ def run_face_matching(video_path):
                     previous_center = bbox_center(last_bbox)
                     distance = np.linalg.norm(current_center - previous_center)
 
-                    distance_bonus = max(0.0, 0.20 - distance / 850)
+                    distance_bonus = max(0.0, 0.35 - distance / 700)
 
                 final_score = similarity + distance_bonus
 
@@ -424,7 +472,7 @@ def run_face_matching(video_path):
                 last_bbox = selected_bbox
 
                 if selected_embedding is not None and selected_similarity is not None:
-                    if selected_similarity > 0.7:
+                    if selected_similarity > 0.8 and lost_frames == 0:
                         reference_embedding = update_reference_embedding(
                             reference_embedding,
                             selected_embedding
