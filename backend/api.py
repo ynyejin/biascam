@@ -162,14 +162,46 @@ def detect_faces_from_video():
             "faces": []
         }
 
-    max_scan_frames = 300
-    frame_skip = 10
+    # max_scan_frames = 300
+    # frame_skip = 10
+
+    # # 너무 많이 보여주면 UI가 지저분해져서 상한 설정
+    # MAX_RESULT_CARDS = 12
+
+    # face_candidates = []
+    # frame_idx = 0
+    # 영상 전체에서 균등하게 샘플링할 프레임 개수
+
+    sample_count = 30
 
     # 너무 많이 보여주면 UI가 지저분해져서 상한 설정
     MAX_RESULT_CARDS = 12
 
     face_candidates = []
     frame_idx = 0
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    if total_frames <= 0:
+        cap.release()
+        return {
+            "message": "invalid video frame count",
+            "count": 0,
+            "faces": []
+        }
+
+    # 영상 전체 구간에서 sample_count개 프레임을 균등하게 선택
+    sample_indices = np.linspace(
+        0,
+        total_frames - 1,
+        sample_count,
+        dtype=int
+    )
+
+    sample_indices = set(int(idx) for idx in sample_indices)
+
+    print("total_frames:", total_frames)
+    print("sample_count:", len(sample_indices))
 
     def crop_with_margin(image, x1, y1, x2, y2, margin_ratio=0.35):
         h, w = image.shape[:2]
@@ -243,15 +275,27 @@ def detect_faces_from_video():
 
         return score
 
-    while frame_idx < max_scan_frames:
+    # while frame_idx < max_scan_frames:
+    #     ret, frame = cap.read()
+
+    #     if not ret:
+    #         break
+
+    #     frame_idx += 1
+
+    #     if frame_idx % frame_skip != 0:
+    #         continue
+
+    #     frame_h, frame_w = frame.shape[:2]
+
+    while True:
         ret, frame = cap.read()
 
         if not ret:
             break
 
-        frame_idx += 1
-
-        if frame_idx % frame_skip != 0:
+        if frame_idx not in sample_indices:
+            frame_idx += 1
             continue
 
         frame_h, frame_w = frame.shape[:2]
@@ -390,6 +434,9 @@ def detect_faces_from_video():
                 "det_score": float(face.det_score)
             })
 
+        # 실제로 분석한 프레임도 인덱스 증가
+        frame_idx += 1
+
     cap.release()
 
     if len(face_candidates) == 0:
@@ -459,9 +506,92 @@ def detect_faces_from_video():
 
         clusters[label].append(candidate)
 
-    selected_candidates = []
+    # selected_candidates = []
 
-    # 4. cluster별 best crop 선택
+    # # 4. cluster별 best crop 선택
+    # for label, members in clusters.items():
+    #     best_candidate = max(
+    #         members,
+    #         key=lambda c: c["score"]
+    #     )
+
+    #     best_candidate["cluster_label"] = int(label)
+    #     best_candidate["cluster_size"] = int(len(members))
+
+    #     selected_candidates.append(best_candidate)
+
+    # # 5. noise 후보도 보조 후보로 추가
+    # # 중요: 이 루프는 cluster 루프 밖에 있어야 함
+    # noise_candidates = sorted(
+    #     noise_candidates,
+    #     key=lambda c: c["score"],
+    #     reverse=True
+    # )
+
+    # for candidate in noise_candidates:
+    #     candidate["cluster_label"] = -1
+    #     candidate["cluster_size"] = 1
+    #     selected_candidates.append(candidate)
+
+    #     if len(selected_candidates) >= MAX_RESULT_CARDS:
+    #         break
+
+    # # cluster가 하나도 없고 noise만 있는 경우도 대비
+    # if len(selected_candidates) == 0:
+    #     selected_candidates = noise_candidates[:MAX_RESULT_CARDS]
+
+    #     for candidate in selected_candidates:
+    #         candidate["cluster_label"] = -1
+    #         candidate["cluster_size"] = 1
+
+    # # 점수순 정렬 후 최대 카드 수 제한
+    # selected_candidates = sorted(
+    #     selected_candidates,
+    #     key=lambda c: c["score"],
+    #     reverse=True
+    # )
+
+    # selected_candidates = selected_candidates[:MAX_RESULT_CARDS]
+
+    def cosine_distance(emb1, emb2):
+        """
+        InsightFace normed_embedding 기준 cosine distance 계산.
+        값이 작을수록 같은 사람일 가능성이 높음.
+        """
+        emb1 = np.array(emb1, dtype=np.float32)
+        emb2 = np.array(emb2, dtype=np.float32)
+
+        denom = np.linalg.norm(emb1) * np.linalg.norm(emb2)
+
+        if denom == 0:
+            return 1.0
+
+        similarity = float(np.dot(emb1, emb2) / denom)
+        distance = 1.0 - similarity
+
+        return distance
+
+
+    def is_duplicate_candidate(candidate, selected_candidates, threshold=0.32):
+        """
+        이미 선택된 후보들과 얼굴 임베딩이 너무 비슷하면 중복으로 판단.
+        threshold가 작을수록 엄격하게 다른 사람으로 봄.
+        threshold가 클수록 같은 사람으로 더 많이 묶음.
+        """
+        for selected in selected_candidates:
+            dist = cosine_distance(candidate["embedding"], selected["embedding"])
+
+            if dist < threshold:
+                return True
+
+        return False
+
+
+    # -----------------------------
+    # 4. cluster별 best crop 후보 만들기
+    # -----------------------------
+    cluster_best_candidates = []
+
     for label, members in clusters.items():
         best_candidate = max(
             members,
@@ -471,10 +601,20 @@ def detect_faces_from_video():
         best_candidate["cluster_label"] = int(label)
         best_candidate["cluster_size"] = int(len(members))
 
-        selected_candidates.append(best_candidate)
+        cluster_best_candidates.append(best_candidate)
 
-    # 5. noise 후보도 보조 후보로 추가
-    # 중요: 이 루프는 cluster 루프 밖에 있어야 함
+
+    # cluster 대표 후보는 점수순 정렬
+    cluster_best_candidates = sorted(
+        cluster_best_candidates,
+        key=lambda c: c["score"],
+        reverse=True
+    )
+
+
+    # -----------------------------
+    # 5. noise 후보도 보조 후보로 준비
+    # -----------------------------
     noise_candidates = sorted(
         noise_candidates,
         key=lambda c: c["score"],
@@ -484,20 +624,37 @@ def detect_faces_from_video():
     for candidate in noise_candidates:
         candidate["cluster_label"] = -1
         candidate["cluster_size"] = 1
+
+
+    # -----------------------------
+    # 6. cluster 후보 + noise 후보를 합친 뒤 최종 중복 제거
+    # -----------------------------
+    candidate_pool = cluster_best_candidates + noise_candidates
+
+    selected_candidates = []
+
+    DUPLICATE_DISTANCE_THRESHOLD = 0.44
+
+    for candidate in candidate_pool:
+        if is_duplicate_candidate(
+            candidate,
+            selected_candidates,
+            threshold=DUPLICATE_DISTANCE_THRESHOLD
+        ):
+            continue
+
         selected_candidates.append(candidate)
 
         if len(selected_candidates) >= MAX_RESULT_CARDS:
             break
 
-    # cluster가 하나도 없고 noise만 있는 경우도 대비
+
+    # 그래도 아무 후보도 없으면 점수 높은 noise라도 사용
     if len(selected_candidates) == 0:
         selected_candidates = noise_candidates[:MAX_RESULT_CARDS]
 
-        for candidate in selected_candidates:
-            candidate["cluster_label"] = -1
-            candidate["cluster_size"] = 1
 
-    # 점수순 정렬 후 최대 카드 수 제한
+    # 최종 점수순 정렬
     selected_candidates = sorted(
         selected_candidates,
         key=lambda c: c["score"],
