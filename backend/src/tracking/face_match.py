@@ -28,13 +28,24 @@ os.makedirs("output", exist_ok=True)
 
 
 def cosine_similarity(a, b):
-    a = np.array(a)
-    b = np.array(b)
+    a = np.array(a, dtype=np.float32).flatten()
+    b = np.array(b, dtype=np.float32).flatten()
 
-    if np.linalg.norm(a) == 0 or np.linalg.norm(b) == 0:
-        return 0.0
+    if a.size == 0 or b.size == 0:
+        return -1.0
 
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+    if a.shape[0] != b.shape[0]:
+        min_len = min(a.shape[0], b.shape[0])
+        a = a[:min_len]
+        b = b[:min_len]
+
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+
+    if norm_a == 0 or norm_b == 0:
+        return -1.0
+
+    return float(np.dot(a, b) / (norm_a * norm_b))
 
 
 def scale_bbox_to_original(bbox, scale):
@@ -354,7 +365,7 @@ def run_face_matching(video_path):
     ) as face_detection, mp_face_mesh.FaceMesh(
         static_image_mode=False,
         max_num_faces=1,
-        refine_landmarks=True
+        refine_landmarks=False
     ) as face_mesh:
 
         selected_bbox, reference_embedding = select_target_face(

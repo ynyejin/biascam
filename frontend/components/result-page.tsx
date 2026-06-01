@@ -8,12 +8,14 @@ interface ResultPageProps {
   onAnalysis: () => void
   onBack: () => void
   selectedFace: number | null
+  resultData: any
 }
 
 export function ResultPage({
   onAnalysis,
   onBack,
   selectedFace,
+  resultData,
 }: ResultPageProps) {
   return (
     <div className="relative h-full w-full flex flex-col items-center p-8 overflow-y-auto">
@@ -65,7 +67,8 @@ export function ResultPage({
         {/* Video frame */}
         <div className="relative aspect-video rounded-2xl overflow-hidden glass bg-black">
           <video
-            src="http://127.0.0.1:8000/output/fancam_web.mp4"
+            key={resultData?.fancam_url}
+            src={resultData?.fancam_url}
             controls
             autoPlay
             className="absolute inset-0 h-full w-full object-contain bg-black"

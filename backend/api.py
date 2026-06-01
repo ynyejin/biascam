@@ -135,6 +135,28 @@ def root():
 
 @app.post("/upload")
 async def upload_video(file: UploadFile = File(...)):
+    # 이전 결과 파일 삭제
+    old_files = [
+        "output/fancam.mp4",
+        "output/fancam_web.mp4",
+        "output/analysis/energy_graph.png",
+        "output/analysis/angle_graph.png",
+        "output/analysis/trajectory_3d.png",
+        "output/analysis/motion_report.txt",
+        "output/faces/faces_meta.json",
+        "selected_member.json",
+    ]
+
+    for path in old_files:
+        if os.path.exists(path):
+            os.remove(path)
+
+    # 이전 후보 이미지 삭제
+    for filename in os.listdir(FACE_DIR):
+        file_path = os.path.join(FACE_DIR, filename)
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+
     temp_video_path = "data/input/uploaded_video_temp.mp4"
 
     with open(temp_video_path, "wb") as buffer:
@@ -622,6 +644,15 @@ def detect_faces_from_video():
     print("cluster_count:", int(cluster_count))
     print("noise_count:", int(noise_count))
     print("final_faces_count:", int(len(faces_result)))
+
+    import json
+
+    faces_meta_path = os.path.join(FACE_DIR, "faces_meta.json")
+
+    with open(faces_meta_path, "w", encoding="utf-8") as f:
+        json.dump(faces_result, f, ensure_ascii=False, indent=2)
+
+    print("faces_meta saved:", faces_meta_path)
     
     return {
         "message": "face candidates clustered",
@@ -643,29 +674,64 @@ def get_progress():
 @app.post("/process")
 def process_video(request: ProcessRequest):
     try:
+        print("PROCESS CALLED")
+        print("selected face_id:", request.face_id)
+
         update_status(5, "Selected face received")
+
+        # 이전 직캠/분석 결과 삭제
+        # 새 직캠 생성에 실패했을 때 예전 결과가 화면에 뜨는 것을 방지
+        old_process_outputs = [
+            "output/fancam.mp4",
+            "output/fancam_web.mp4",
+            "output/analysis/energy_graph.png",
+            "output/analysis/angle_graph.png",
+            "output/analysis/trajectory_3d.png",
+            "output/analysis/motion_report.txt",
+        ]
+
+        for path in old_process_outputs:
+            if os.path.exists(path):
+                os.remove(path)
+
+        import json
+        import time
 
         selected_member = None
 
-        detect_result = detect_faces_from_video()
+        # detect_faces_from_video()를 다시 호출하지 않음.
+        # 사용자가 실제로 봤던 후보 목록을 저장한 faces_meta.json을 읽음.
+        faces_meta_path = os.path.join(FACE_DIR, "faces_meta.json")
 
-        for person in detect_result["faces"]:
-            if person["id"] == request.face_id:
+        if not os.path.exists(faces_meta_path):
+            raise Exception("faces_meta.json not found. Please run face detection first.")
+
+        with open(faces_meta_path, "r", encoding="utf-8") as f:
+            faces = json.load(f)
+
+        for person in faces:
+            if int(person["id"]) == int(request.face_id):
                 selected_member = person
                 break
 
         if selected_member is None:
             raise Exception("selected member not found")
 
-        import json
-
-        with open("selected_member.json", "w") as f:
+        # face_match.py에서 읽을 선택 멤버 정보 저장
+        with open("selected_member.json", "w", encoding="utf-8") as f:
             json.dump(
                 {
-                    "id": selected_member["id"],
-                    "bbox": selected_member["bbox"]
+                    "id": int(selected_member["id"]),
+                    "bbox": selected_member["bbox"],
+                    "person_bbox": selected_member.get("person_bbox"),
+                    "frame_idx": selected_member.get("frame_idx"),
+                    "cluster_label": selected_member.get("cluster_label"),
+                    "cluster_size": selected_member.get("cluster_size"),
+                    "score": selected_member.get("score"),
                 },
-                f
+                f,
+                ensure_ascii=False,
+                indent=2
             )
 
         update_status(25, "Generating fancam")
@@ -674,6 +740,10 @@ def process_video(request: ProcessRequest):
             ["python", "src/tracking/face_match.py"],
             check=True
         )
+
+        print("DONE face_match.py")
+        print("fancam exists:", os.path.exists("output/fancam.mp4"))
+        print("fancam size:", os.path.getsize("output/fancam.mp4") if os.path.exists("output/fancam.mp4") else None)
 
         update_status(55, "Converting video for web playback")
 
@@ -689,6 +759,9 @@ def process_video(request: ProcessRequest):
             check=True
         )
 
+        if not os.path.exists("output/fancam_web.mp4") or os.path.getsize("output/fancam_web.mp4") == 0:
+            raise Exception("fancam_web.mp4 was not created or is empty")
+
         update_status(75, "Running motion analysis")
 
         subprocess.run(
@@ -698,12 +771,15 @@ def process_video(request: ProcessRequest):
 
         update_status(100, "Complete", done=True)
 
+        # 브라우저 캐시 방지용 timestamp
+        timestamp = int(time.time())
+
         return {
             "message": "processing complete",
-            "fancam_url": "http://127.0.0.1:8000/output/fancam_web.mp4",
-            "energy_graph": "http://127.0.0.1:8000/output/analysis/energy_graph.png",
-            "angle_graph": "http://127.0.0.1:8000/output/analysis/angle_graph.png",
-            "trajectory_graph": "http://127.0.0.1:8000/output/analysis/trajectory_3d.png",
+            "fancam_url": f"http://127.0.0.1:8000/output/fancam_web.mp4?t={timestamp}",
+            "energy_graph": f"http://127.0.0.1:8000/output/analysis/energy_graph.png?t={timestamp}",
+            "angle_graph": f"http://127.0.0.1:8000/output/analysis/angle_graph.png?t={timestamp}",
+            "trajectory_graph": f"http://127.0.0.1:8000/output/analysis/trajectory_3d.png?t={timestamp}",
         }
 
     except Exception as e:
@@ -712,6 +788,7 @@ def process_video(request: ProcessRequest):
             "message": "processing failed",
             "error": str(e)
         }
+
     
 @app.get("/analysis-results")
 def get_analysis_results():

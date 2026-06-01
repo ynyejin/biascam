@@ -31,6 +31,7 @@ export default function Home() {
   const [direction, setDirection] = useState(1)
   const [selectedFace, setSelectedFace] = useState<number | null>(null)
   const [processError, setProcessError] = useState<string | null>(null)
+  const [resultData, setResultData] = useState<any>(null)
 
   const goToPage = useCallback(
     (page: AppPage) => {
@@ -43,35 +44,37 @@ export default function Home() {
   )
 
   const handleFaceSelect = async (faceId: number) => {
-    setSelectedFace(faceId)
-    setProcessError(null)
-    goToPage("processing")
+  setSelectedFace(faceId)
+  setProcessError(null)
+  setResultData(null)
+  goToPage("processing")
 
-    try {
-      const response = await fetch("http://127.0.0.1:8000/process", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          face_id: faceId,
-        }),
-      })
+  try {
+    const response = await fetch("http://127.0.0.1:8000/process", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        face_id: faceId,
+      }),
+    })
 
-      if (!response.ok) {
-        throw new Error("Processing failed")
-      }
+    const data = await response.json()
+    console.log("Processing response:", data)
 
-      const data = await response.json()
-      console.log("Processing complete:", data)
-
-      goToPage("result")
-    } catch (error) {
-      console.error(error)
-      setProcessError("처리 중 오류가 발생했습니다. 백엔드 서버를 확인해주세요.")
-      goToPage("selection")
+    if (!response.ok || data.message !== "processing complete") {
+      throw new Error(data.error || "Processing failed")
     }
+
+    setResultData(data)
+    goToPage("result")
+  } catch (error) {
+    console.error(error)
+    setProcessError("처리 중 오류가 발생했습니다. 백엔드 서버를 확인해주세요.")
+    goToPage("selection")
   }
+}
 
   const variants = {
     enter: (direction: number) => ({
@@ -117,6 +120,7 @@ export default function Home() {
             onAnalysis={() => goToPage("analysis")}
             onBack={() => goToPage("selection")}
             selectedFace={selectedFace}
+            resultData={resultData}
           />
         )
 
