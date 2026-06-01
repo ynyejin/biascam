@@ -135,14 +135,17 @@ def root():
 
 @app.post("/upload")
 async def upload_video(file: UploadFile = File(...)):
-    with open(CURRENT_VIDEO_PATH, "wb") as buffer:
+    temp_video_path = "data/input/uploaded_video_temp.mp4"
+
+    with open(temp_video_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
+
+    os.replace(temp_video_path, CURRENT_VIDEO_PATH)
 
     return {
         "message": "upload success",
         "video_path": CURRENT_VIDEO_PATH
     }
-
 
 @app.post("/detect-faces")
 def detect_faces_from_video():
@@ -162,20 +165,11 @@ def detect_faces_from_video():
             "faces": []
         }
 
-    # max_scan_frames = 300
-    # frame_skip = 10
-
-    # # 너무 많이 보여주면 UI가 지저분해져서 상한 설정
-    # MAX_RESULT_CARDS = 12
-
-    # face_candidates = []
-    # frame_idx = 0
-    # 영상 전체에서 균등하게 샘플링할 프레임 개수
-
-    sample_count = 30
-
-    # 너무 많이 보여주면 UI가 지저분해져서 상한 설정
-    MAX_RESULT_CARDS = 12
+    # -----------------------------
+    # 설정값
+    # -----------------------------
+    sample_count = 40
+    MAX_RESULT_CARDS = 20
 
     face_candidates = []
     frame_idx = 0
@@ -190,10 +184,17 @@ def detect_faces_from_video():
             "faces": []
         }
 
-    # 영상 전체 구간에서 sample_count개 프레임을 균등하게 선택
+    # 앞뒤 10% 구간 제외하고 중간 80%에서 균등 샘플링
+    start_idx = int(total_frames * 0.10)
+    end_idx = int(total_frames * 0.90)
+
+    if end_idx <= start_idx:
+        start_idx = 0
+        end_idx = total_frames - 1
+
     sample_indices = np.linspace(
-        0,
-        total_frames - 1,
+        start_idx,
+        end_idx,
         sample_count,
         dtype=int
     )
@@ -202,8 +203,9 @@ def detect_faces_from_video():
 
     print("total_frames:", total_frames)
     print("sample_count:", len(sample_indices))
+    print("sample_range:", start_idx, "~", end_idx)
 
-    def crop_with_margin(image, x1, y1, x2, y2, margin_ratio=0.35):
+    def crop_with_margin(image, x1, y1, x2, y2, margin_ratio=0.45):
         h, w = image.shape[:2]
 
         box_w = x2 - x1
@@ -220,29 +222,15 @@ def detect_faces_from_video():
         return image[ny1:ny2, nx1:nx2], [nx1, ny1, nx2, ny2]
 
     def calc_blur_score(face_crop):
-        """
-        얼굴이 너무 흐린 후보를 낮게 평가하기 위한 점수.
-        """
         if face_crop is None or face_crop.size == 0:
             return 0.0
 
         gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
         blur_value = cv2.Laplacian(gray, cv2.CV_64F).var()
 
-        # 너무 큰 값 방지용 normalize
         return min(blur_value / 300.0, 1.0)
 
-    def calc_face_score(face, face_crop, frame_w, frame_h):
-        """
-        후보 카드로 쓰기 좋은 얼굴인지 평가.
-        기준:
-        - 얼굴 detection confidence
-        - 얼굴 크기
-        - 화면 중앙성
-        - 선명도
-        """
-        x1, y1, x2, y2 = face.bbox.astype(int)
-
+    def calc_face_score(face_crop, frame_w, frame_h, x1, y1, x2, y2, det_score):
         face_w = x2 - x1
         face_h = y2 - y1
 
@@ -260,34 +248,22 @@ def detect_faces_from_video():
         center_x_score = max(0.0, center_x_score)
         center_y_score = max(0.0, center_y_score)
 
-        size_score = min(face_area_ratio * 80, 1.0)
+        size_score = min(face_area_ratio * 120, 1.0)
         blur_score = calc_blur_score(face_crop)
 
-        det_score = float(face.det_score)
-
         score = (
-            det_score * 0.40
+            float(det_score) * 0.45
             + size_score * 0.30
             + blur_score * 0.15
-            + center_x_score * 0.10
-            + center_y_score * 0.05
+            + center_x_score * 0.07
+            + center_y_score * 0.03
         )
 
         return score
 
-    # while frame_idx < max_scan_frames:
-    #     ret, frame = cap.read()
-
-    #     if not ret:
-    #         break
-
-    #     frame_idx += 1
-
-    #     if frame_idx % frame_skip != 0:
-    #         continue
-
-    #     frame_h, frame_w = frame.shape[:2]
-
+    # -----------------------------
+    # 1. 샘플 프레임마다 InsightFace 직접 탐지
+    # -----------------------------
     while True:
         ret, frame = cap.read()
 
@@ -300,109 +276,42 @@ def detect_faces_from_video():
 
         frame_h, frame_w = frame.shape[:2]
 
-        # 1. YOLO로 사람 후보 탐지
-        results = yolo_model(
-            frame,
-            verbose=False
-        )
+        faces = face_analyzer.get(frame)
 
-        people = []
+        if faces is None or len(faces) == 0:
+            frame_idx += 1
+            continue
 
-        for result in results:
-            boxes = result.boxes
+        for face in faces:
+            det_score = float(face.det_score)
 
-            if boxes is None:
+            # 너무 신뢰도 낮은 얼굴 제외
+            if det_score < 0.45:
                 continue
 
-            for box in boxes:
-                cls_id = int(box.cls[0])
-                conf = float(box.conf[0])
+            x1, y1, x2, y2 = face.bbox.astype(int)
 
-                # COCO class 0 = person
-                if cls_id != 0:
-                    continue
-
-                if conf < 0.30:
-                    continue
-
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-
-                x1 = int(x1)
-                y1 = int(y1)
-                x2 = int(x2)
-                y2 = int(y2)
-
-                if x2 <= x1 or y2 <= y1:
-                    continue
-
-                person_w = x2 - x1
-                person_h = y2 - y1
-
-                area_ratio = (person_w * person_h) / (frame_w * frame_h)
-
-                # 너무 작은 사람 후보 제거
-                if area_ratio < 0.004:
-                    continue
-
-                people.append({
-                    "bbox": [x1, y1, x2, y2],
-                    "score": conf
-                })
-
-        # 2. 각 person crop 안에서 얼굴 탐지 + 임베딩 추출
-        for person in people:
-            px1, py1, px2, py2 = person["bbox"]
-
-            person_crop = frame[py1:py2, px1:px2]
-
-            if person_crop.size == 0:
+            if x2 <= x1 or y2 <= y1:
                 continue
 
-            faces = face_analyzer.get(person_crop)
+            face_w = x2 - x1
+            face_h = y2 - y1
 
-            if faces is None or len(faces) == 0:
+            # 너무 작은 얼굴 제외
+            face_area_ratio = (face_w * face_h) / (frame_w * frame_h)
+            if face_area_ratio < 0.001:
                 continue
-
-            # 한 person crop 안에서 가장 큰 얼굴만 사용
-            faces = sorted(
-                faces,
-                key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
-                reverse=True
-            )
-
-            face = faces[0]
-
-            fx1, fy1, fx2, fy2 = face.bbox.astype(int)
-
-            face_w = fx2 - fx1
-            face_h = fy2 - fy1
-
-            if face_w <= 0 or face_h <= 0:
-                continue
-
-            # 얼굴이 너무 작은 경우 제외
-            person_crop_h, person_crop_w = person_crop.shape[:2]
-            face_area_ratio_in_person = (face_w * face_h) / (person_crop_w * person_crop_h)
-
-            if face_area_ratio_in_person < 0.015:
-                continue
-
-            # person crop 좌표계의 face bbox를 원본 frame 좌표계로 변환
-            abs_fx1 = int(px1 + fx1)
-            abs_fy1 = int(py1 + fy1)
-            abs_fx2 = int(px1 + fx2)
-            abs_fy2 = int(py1 + fy2)
 
             face_card_crop, crop_bbox = crop_with_margin(
                 frame,
-                abs_fx1,
-                abs_fy1,
-                abs_fx2,
-                abs_fy2,
+                x1,
+                y1,
+                x2,
+                y2,
                 margin_ratio=0.45
             )
 
-            if face_card_crop.size == 0:
+            if face_card_crop is None or face_card_crop.size == 0:
                 continue
 
             embedding = face.normed_embedding
@@ -412,29 +321,32 @@ def detect_faces_from_video():
 
             embedding = np.array(embedding, dtype=np.float32)
 
-            # NaN / inf embedding 방지
+            # NaN / inf 방지
             if not np.all(np.isfinite(embedding)):
                 continue
 
             face_score = calc_face_score(
-                face=face,
                 face_crop=face_card_crop,
                 frame_w=frame_w,
-                frame_h=frame_h
+                frame_h=frame_h,
+                x1=x1,
+                y1=y1,
+                x2=x2,
+                y2=y2,
+                det_score=det_score
             )
 
             face_candidates.append({
                 "frame_idx": int(frame_idx),
-                "person_bbox": [int(v) for v in person["bbox"]],
-                "face_bbox": [int(abs_fx1), int(abs_fy1), int(abs_fx2), int(abs_fy2)],
+                "face_bbox": [int(x1), int(y1), int(x2), int(y2)],
+                "person_bbox": [int(x1), int(y1), int(x2), int(y2)],  # 프론트 호환용
                 "crop_bbox": [int(v) for v in crop_bbox],
                 "crop": face_card_crop,
                 "embedding": embedding,
                 "score": float(face_score),
-                "det_score": float(face.det_score)
+                "det_score": det_score
             })
 
-        # 실제로 분석한 프레임도 인덱스 증가
         frame_idx += 1
 
     cap.release()
@@ -446,23 +358,23 @@ def detect_faces_from_video():
             "faces": []
         }
 
-    # 점수순으로 너무 많은 후보를 줄여서 clustering 부담 감소
+    # 너무 많은 후보는 상위 점수만 사용
     face_candidates = sorted(
         face_candidates,
         key=lambda c: c["score"],
         reverse=True
     )
 
-    # 너무 많은 프레임에서 얼굴이 잡히면 clustering이 느려질 수 있으므로 상위 후보만 사용
-    face_candidates = face_candidates[:80]
+    face_candidates = face_candidates[:100]
 
-    # 3. 얼굴 임베딩 clustering
+    # -----------------------------
+    # 2. 얼굴 임베딩 clustering
+    # -----------------------------
     embeddings = np.array(
         [candidate["embedding"] for candidate in face_candidates],
         dtype=np.float32
     )
 
-    # NaN / inf 방지
     valid_indices = []
     valid_embeddings = []
 
@@ -477,28 +389,38 @@ def detect_faces_from_video():
             "count": 0,
             "faces": []
         }
-
+    
     valid_embeddings = np.array(valid_embeddings, dtype=np.float32)
+
+    valid_embeddings = np.nan_to_num(
+        valid_embeddings,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0
+    )
+
+    norms = np.linalg.norm(valid_embeddings, axis=1, keepdims=True)
+    valid_embeddings = valid_embeddings / np.maximum(norms, 1e-8)
+
     face_candidates = [face_candidates[i] for i in valid_indices]
 
     clustering = DBSCAN(
-        eps=0.28,
-        min_samples=2,
+        eps=0.60,
+        min_samples=1,
         metric="cosine"
     ).fit(valid_embeddings)
 
     labels = clustering.labels_
 
     clusters = {}
-    noise_candidates = []
+    noise_count = 0
 
     for idx, label in enumerate(labels):
         candidate = face_candidates[idx]
-
         label = int(label)
 
         if label == -1:
-            noise_candidates.append(candidate)
+            noise_count += 1
             continue
 
         if label not in clusters:
@@ -506,58 +428,11 @@ def detect_faces_from_video():
 
         clusters[label].append(candidate)
 
-    # selected_candidates = []
-
-    # # 4. cluster별 best crop 선택
-    # for label, members in clusters.items():
-    #     best_candidate = max(
-    #         members,
-    #         key=lambda c: c["score"]
-    #     )
-
-    #     best_candidate["cluster_label"] = int(label)
-    #     best_candidate["cluster_size"] = int(len(members))
-
-    #     selected_candidates.append(best_candidate)
-
-    # # 5. noise 후보도 보조 후보로 추가
-    # # 중요: 이 루프는 cluster 루프 밖에 있어야 함
-    # noise_candidates = sorted(
-    #     noise_candidates,
-    #     key=lambda c: c["score"],
-    #     reverse=True
-    # )
-
-    # for candidate in noise_candidates:
-    #     candidate["cluster_label"] = -1
-    #     candidate["cluster_size"] = 1
-    #     selected_candidates.append(candidate)
-
-    #     if len(selected_candidates) >= MAX_RESULT_CARDS:
-    #         break
-
-    # # cluster가 하나도 없고 noise만 있는 경우도 대비
-    # if len(selected_candidates) == 0:
-    #     selected_candidates = noise_candidates[:MAX_RESULT_CARDS]
-
-    #     for candidate in selected_candidates:
-    #         candidate["cluster_label"] = -1
-    #         candidate["cluster_size"] = 1
-
-    # # 점수순 정렬 후 최대 카드 수 제한
-    # selected_candidates = sorted(
-    #     selected_candidates,
-    #     key=lambda c: c["score"],
-    #     reverse=True
-    # )
-
-    # selected_candidates = selected_candidates[:MAX_RESULT_CARDS]
-
+    # -----------------------------
+    # 3. cluster 하나 = 멤버 한 명
+    # cluster별 best crop만 표시
+    # -----------------------------
     def cosine_distance(emb1, emb2):
-        """
-        InsightFace normed_embedding 기준 cosine distance 계산.
-        값이 작을수록 같은 사람일 가능성이 높음.
-        """
         emb1 = np.array(emb1, dtype=np.float32)
         emb2 = np.array(emb2, dtype=np.float32)
 
@@ -567,17 +442,10 @@ def detect_faces_from_video():
             return 1.0
 
         similarity = float(np.dot(emb1, emb2) / denom)
-        distance = 1.0 - similarity
-
-        return distance
+        return 1.0 - similarity
 
 
-    def is_duplicate_candidate(candidate, selected_candidates, threshold=0.32):
-        """
-        이미 선택된 후보들과 얼굴 임베딩이 너무 비슷하면 중복으로 판단.
-        threshold가 작을수록 엄격하게 다른 사람으로 봄.
-        threshold가 클수록 같은 사람으로 더 많이 묶음.
-        """
+    def is_duplicate_cluster(candidate, selected_candidates, threshold=0.55):
         for selected in selected_candidates:
             dist = cosine_distance(candidate["embedding"], selected["embedding"])
 
@@ -586,11 +454,10 @@ def detect_faces_from_video():
 
         return False
 
-
     # -----------------------------
-    # 4. cluster별 best crop 후보 만들기
+    # 4. cluster별 대표 후보 만들기
     # -----------------------------
-    cluster_best_candidates = []
+    cluster_representatives = []
 
     for label, members in clusters.items():
         best_candidate = max(
@@ -600,68 +467,55 @@ def detect_faces_from_video():
 
         best_candidate["cluster_label"] = int(label)
         best_candidate["cluster_size"] = int(len(members))
+        best_candidate["source_type"] = "cluster"
 
-        cluster_best_candidates.append(best_candidate)
+        cluster_representatives.append(best_candidate)
 
 
-    # cluster 대표 후보는 점수순 정렬
-    cluster_best_candidates = sorted(
-        cluster_best_candidates,
+    # 점수 높은 후보부터 선택
+    cluster_representatives = sorted(
+        cluster_representatives,
         key=lambda c: c["score"],
         reverse=True
     )
 
 
     # -----------------------------
-    # 5. noise 후보도 보조 후보로 준비
+    # 5. cluster 대표 후보끼리 중복 제거
     # -----------------------------
-    noise_candidates = sorted(
-        noise_candidates,
-        key=lambda c: c["score"],
-        reverse=True
-    )
-
-    for candidate in noise_candidates:
-        candidate["cluster_label"] = -1
-        candidate["cluster_size"] = 1
-
-
-    # -----------------------------
-    # 6. cluster 후보 + noise 후보를 합친 뒤 최종 중복 제거
-    # -----------------------------
-    candidate_pool = cluster_best_candidates + noise_candidates
-
     selected_candidates = []
 
-    DUPLICATE_DISTANCE_THRESHOLD = 0.44
+    CLUSTER_MERGE_DISTANCE_THRESHOLD = 0.75
 
-    for candidate in candidate_pool:
-        if is_duplicate_candidate(
+    for candidate in cluster_representatives:
+        if is_duplicate_cluster(
             candidate,
             selected_candidates,
-            threshold=DUPLICATE_DISTANCE_THRESHOLD
+            threshold=CLUSTER_MERGE_DISTANCE_THRESHOLD
         ):
             continue
 
         selected_candidates.append(candidate)
 
-        if len(selected_candidates) >= MAX_RESULT_CARDS:
-            break
 
-
-    # 그래도 아무 후보도 없으면 점수 높은 noise라도 사용
-    if len(selected_candidates) == 0:
-        selected_candidates = noise_candidates[:MAX_RESULT_CARDS]
-
-
-    # 최종 점수순 정렬
-    selected_candidates = sorted(
-        selected_candidates,
-        key=lambda c: c["score"],
-        reverse=True
-    )
-
+    # 안전 상한
+    MAX_RESULT_CARDS = 20
     selected_candidates = selected_candidates[:MAX_RESULT_CARDS]
+
+    if len(selected_candidates) == 0:
+        print("DEBUG: no selected candidates")
+        print("raw_face_candidates:", int(len(face_candidates)))
+        print("cluster_count:", int(len(clusters)))
+        print("noise_count:", int(noise_count))
+
+        return {
+            "message": "no clustered members detected",
+            "count": 0,
+            "raw_face_candidates": int(len(face_candidates)),
+            "cluster_count": int(len(clusters)),
+            "noise_count": int(noise_count),
+            "faces": []
+        }
 
     faces_result = []
 
@@ -685,7 +539,7 @@ def detect_faces_from_video():
 
     print("raw_face_candidates:", int(len(face_candidates)))
     print("cluster_count:", int(len(clusters)))
-    print("noise_count:", int(len(noise_candidates)))
+    print("noise_count:", int(noise_count))
     print("final_faces_count:", int(len(faces_result)))
 
     return {
@@ -693,7 +547,7 @@ def detect_faces_from_video():
         "count": int(len(faces_result)),
         "raw_face_candidates": int(len(face_candidates)),
         "cluster_count": int(len(clusters)),
-        "noise_count": int(len(noise_candidates)),
+        "noise_count": int(noise_count),
         "faces": faces_result
     }
 
