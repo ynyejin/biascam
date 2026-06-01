@@ -402,36 +402,19 @@ def detect_faces_from_video():
     norms = np.linalg.norm(valid_embeddings, axis=1, keepdims=True)
     valid_embeddings = valid_embeddings / np.maximum(norms, 1e-8)
 
+    valid_embeddings = np.nan_to_num(
+        valid_embeddings,
+        nan=0.0,
+        posinf=0.0,
+        neginf=0.0
+    ).astype(np.float64)
+
     face_candidates = [face_candidates[i] for i in valid_indices]
 
-    clustering = DBSCAN(
-        eps=0.60,
-        min_samples=1,
-        metric="cosine"
-    ).fit(valid_embeddings)
-
-    labels = clustering.labels_
-
-    clusters = {}
-    noise_count = 0
-
-    for idx, label in enumerate(labels):
-        candidate = face_candidates[idx]
-        label = int(label)
-
-        if label == -1:
-            noise_count += 1
-            continue
-
-        if label not in clusters:
-            clusters[label] = []
-
-        clusters[label].append(candidate)
-
     # -----------------------------
-    # 3. cluster 하나 = 멤버 한 명
-    # cluster별 best crop만 표시
+    # 3. 동적 eps 재시도 기반 clustering
     # -----------------------------
+
     def cosine_distance(emb1, emb2):
         emb1 = np.array(emb1, dtype=np.float32)
         emb2 = np.array(emb2, dtype=np.float32)
@@ -445,7 +428,7 @@ def detect_faces_from_video():
         return 1.0 - similarity
 
 
-    def is_duplicate_cluster(candidate, selected_candidates, threshold=0.55):
+    def is_duplicate_cluster(candidate, selected_candidates, threshold):
         for selected in selected_candidates:
             dist = cosine_distance(candidate["embedding"], selected["embedding"])
 
@@ -454,66 +437,164 @@ def detect_faces_from_video():
 
         return False
 
-    # -----------------------------
-    # 4. cluster별 대표 후보 만들기
-    # -----------------------------
-    cluster_representatives = []
 
-    for label, members in clusters.items():
-        best_candidate = max(
-            members,
-            key=lambda c: c["score"]
+    def build_selected_candidates(eps, merge_threshold):
+        """
+        eps와 merge_threshold 조합으로 clustering을 실행하고,
+        cluster 대표 후보들을 만든 뒤,
+        대표 후보끼리 한 번 더 병합해서 최종 후보를 반환한다.
+        """
+        clustering = DBSCAN(
+            eps=eps,
+            min_samples=1,
+            metric="cosine"
+        ).fit(valid_embeddings)
+
+        labels = clustering.labels_
+
+        clusters = {}
+        noise_count = 0
+
+        for idx, label in enumerate(labels):
+            candidate = face_candidates[idx]
+            label = int(label)
+
+            if label == -1:
+                noise_count += 1
+                continue
+
+            if label not in clusters:
+                clusters[label] = []
+
+            clusters[label].append(candidate)
+
+        # cluster별 대표 후보 만들기
+        cluster_representatives = []
+
+        for label, members in clusters.items():
+            best_candidate = max(
+                members,
+                key=lambda c: c["score"]
+            )
+
+            best_candidate["cluster_label"] = int(label)
+            best_candidate["cluster_size"] = int(len(members))
+            best_candidate["source_type"] = "cluster"
+
+            cluster_representatives.append(best_candidate)
+
+        # 점수 높은 후보부터 선택
+        cluster_representatives = sorted(
+            cluster_representatives,
+            key=lambda c: c["score"],
+            reverse=True
         )
 
-        best_candidate["cluster_label"] = int(label)
-        best_candidate["cluster_size"] = int(len(members))
-        best_candidate["source_type"] = "cluster"
+        # cluster 대표 후보끼리 중복 제거
+        selected = []
 
-        cluster_representatives.append(best_candidate)
+        for candidate in cluster_representatives:
+            if is_duplicate_cluster(
+                candidate,
+                selected,
+                threshold=merge_threshold
+            ):
+                continue
+
+            selected.append(candidate)
+
+        return {
+            "eps": eps,
+            "merge_threshold": merge_threshold,
+            "selected_candidates": selected,
+            "cluster_count": int(len(clusters)),
+            "noise_count": int(noise_count),
+            "final_count": int(len(selected))
+        }
 
 
-    # 점수 높은 후보부터 선택
-    cluster_representatives = sorted(
-        cluster_representatives,
-        key=lambda c: c["score"],
-        reverse=True
-    )
+    # 여러 조합을 순서대로 시도
+    # 위쪽은 강하게 묶는 설정, 아래쪽은 덜 묶는 설정
+    clustering_trials = [
+        {"eps": 0.65, "merge": 0.80},
+        {"eps": 0.60, "merge": 0.75},
+        {"eps": 0.55, "merge": 0.70},
+        {"eps": 0.50, "merge": 0.65},
+        {"eps": 0.45, "merge": 0.60},
+        {"eps": 0.40, "merge": 0.55},
+    ]
 
+    # BiasCam은 보통 3명 이상 그룹 영상을 대상으로 하므로
+    # final_count가 2 이하이면 너무 적게 묶인 것으로 보고 다음 설정을 시도한다.
+    # 8명 그룹도 고려해서 상한은 넉넉하게 둔다.
+    ACCEPT_MIN_COUNT = 3
+    ACCEPT_MAX_COUNT = 12
 
-    # -----------------------------
-    # 5. cluster 대표 후보끼리 중복 제거
-    # -----------------------------
-    selected_candidates = []
+    trial_results = []
 
-    CLUSTER_MERGE_DISTANCE_THRESHOLD = 0.75
+    for trial in clustering_trials:
+        result = build_selected_candidates(
+            eps=trial["eps"],
+            merge_threshold=trial["merge"]
+        )
 
-    for candidate in cluster_representatives:
-        if is_duplicate_cluster(
-            candidate,
-            selected_candidates,
-            threshold=CLUSTER_MERGE_DISTANCE_THRESHOLD
-        ):
-            continue
+        trial_results.append(result)
 
-        selected_candidates.append(candidate)
+        print(
+            f"trial eps={result['eps']}, "
+            f"merge={result['merge_threshold']}, "
+            f"cluster_count={result['cluster_count']}, "
+            f"final_count={result['final_count']}, "
+            f"noise_count={result['noise_count']}"
+        )
 
+    # 모든 trial을 다 실행한 뒤 선택
+    valid_results = [
+        r for r in trial_results
+        if ACCEPT_MIN_COUNT <= r["final_count"] <= ACCEPT_MAX_COUNT
+    ]
+
+    if len(valid_results) > 0:
+        # 누락보다 중복이 덜 치명적이므로, 후보가 더 많이 나온 결과를 선택
+        chosen_result = max(
+            valid_results,
+            key=lambda r: r["final_count"]
+        )
+    else:
+        # 정상 범위가 없으면, 전체 중 가장 많이 나온 결과 선택
+        chosen_result = max(
+            trial_results,
+            key=lambda r: r["final_count"]
+        )
+
+    selected_candidates = chosen_result["selected_candidates"]
+
+    cluster_count = chosen_result["cluster_count"]
+    noise_count = chosen_result["noise_count"]
+    selected_eps = chosen_result["eps"]
+    selected_merge_threshold = chosen_result["merge_threshold"]
 
     # 안전 상한
     MAX_RESULT_CARDS = 20
     selected_candidates = selected_candidates[:MAX_RESULT_CARDS]
 
+    print("selected_eps:", selected_eps)
+    print("selected_merge_threshold:", selected_merge_threshold)
+
     if len(selected_candidates) == 0:
         print("DEBUG: no selected candidates")
         print("raw_face_candidates:", int(len(face_candidates)))
-        print("cluster_count:", int(len(clusters)))
+        print("cluster_count:", int(cluster_count))
         print("noise_count:", int(noise_count))
 
         return {
             "message": "no clustered members detected",
             "count": 0,
             "raw_face_candidates": int(len(face_candidates)),
-            "cluster_count": int(len(clusters)),
+            "cluster_count": int(cluster_count),
             "noise_count": int(noise_count),
+            "selected_eps": float(selected_eps),
+            "selected_merge_threshold": float(selected_merge_threshold),
             "faces": []
         }
 
@@ -538,16 +619,18 @@ def detect_faces_from_video():
         })
 
     print("raw_face_candidates:", int(len(face_candidates)))
-    print("cluster_count:", int(len(clusters)))
+    print("cluster_count:", int(cluster_count))
     print("noise_count:", int(noise_count))
     print("final_faces_count:", int(len(faces_result)))
-
+    
     return {
         "message": "face candidates clustered",
         "count": int(len(faces_result)),
         "raw_face_candidates": int(len(face_candidates)),
-        "cluster_count": int(len(clusters)),
+        "cluster_count": int(cluster_count),
         "noise_count": int(noise_count),
+        "selected_eps": float(selected_eps),
+        "selected_merge_threshold": float(selected_merge_threshold),
         "faces": faces_result
     }
 
