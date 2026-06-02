@@ -63,12 +63,11 @@ export default function Home() {
     const data = await response.json()
     console.log("Processing response:", data)
 
-    if (!response.ok || data.message !== "processing complete") {
+    if (!response.ok || data.message !== "processing started") {
       throw new Error(data.error || "Processing failed")
     }
 
-    setResultData(data)
-    goToPage("result")
+    goToPage("processing")
   } catch (error) {
     console.error(error)
     setProcessError("처리 중 오류가 발생했습니다. 백엔드 서버를 확인해주세요.")
@@ -112,7 +111,12 @@ export default function Home() {
         )
 
       case "processing":
-        return <ProcessingPage onComplete={() => goToPage("result")} />
+        return (
+          <ProcessingPage
+            onComplete={() => goToPage("result")}
+            setResultData={setResultData}
+          />
+        )
 
       case "result":
         return (

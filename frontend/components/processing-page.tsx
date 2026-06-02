@@ -5,6 +5,14 @@ import { motion } from "framer-motion"
 
 interface ProcessingPageProps {
   onComplete: () => void
+  setResultData: (data: ProcessResult) => void
+}
+
+interface ProcessResult {
+  fancam_url: string
+  energy_graph: string
+  angle_graph: string
+  trajectory_graph: string
 }
 
 interface ProgressResponse {
@@ -12,6 +20,7 @@ interface ProgressResponse {
   message: string
   done: boolean
   error: string | null
+  result?: ProcessResult | null
 }
 
 const processingSteps = [
@@ -21,7 +30,7 @@ const processingSteps = [
   { id: 4, label: "Generating result", icon: "🎬", threshold: 100 },
 ]
 
-export function ProcessingPage({ onComplete }: ProcessingPageProps) {
+export function ProcessingPage({ onComplete, setResultData }: ProcessingPageProps) {
   const [currentStep, setCurrentStep] = useState(0)
   const [progress, setProgress] = useState(0)
   const [statusMessage, setStatusMessage] = useState("Starting...")
@@ -62,6 +71,14 @@ export function ProcessingPage({ onComplete }: ProcessingPageProps) {
 
         if (data.done && nextProgress >= 100 && !completed) {
           completed = true
+
+          if (!data.result) {
+            setError("처리 결과 데이터를 불러오지 못했습니다.")
+            return
+          }
+
+          setResultData(data.result)
+
           setTimeout(() => {
             onComplete()
           }, 700)

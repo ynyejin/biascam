@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -51,7 +51,8 @@ process_status = {
     "progress": 0,
     "message": "Waiting",
     "done": False,
-    "error": None
+    "error": None,
+    "result": None
 }
 
 def update_status(progress, message, done=False, error=None):
@@ -671,16 +672,11 @@ def get_progress():
     return process_status
 
 
-@app.post("/process")
-def process_video(request: ProcessRequest):
+def run_process_task(face_id: int):
     try:
-        print("PROCESS CALLED")
-        print("selected face_id:", request.face_id)
-
-        update_status(5, "Selected face received")
+        update_status(5, "Selected face received", done=False, error=None)
 
         # 이전 직캠/분석 결과 삭제
-        # 새 직캠 생성에 실패했을 때 예전 결과가 화면에 뜨는 것을 방지
         old_process_outputs = [
             "output/fancam.mp4",
             "output/fancam_web.mp4",
@@ -699,8 +695,6 @@ def process_video(request: ProcessRequest):
 
         selected_member = None
 
-        # detect_faces_from_video()를 다시 호출하지 않음.
-        # 사용자가 실제로 봤던 후보 목록을 저장한 faces_meta.json을 읽음.
         faces_meta_path = os.path.join(FACE_DIR, "faces_meta.json")
 
         if not os.path.exists(faces_meta_path):
@@ -710,14 +704,13 @@ def process_video(request: ProcessRequest):
             faces = json.load(f)
 
         for person in faces:
-            if int(person["id"]) == int(request.face_id):
+            if int(person["id"]) == int(face_id):
                 selected_member = person
                 break
 
         if selected_member is None:
             raise Exception("selected member not found")
 
-        # face_match.py에서 읽을 선택 멤버 정보 저장
         with open("selected_member.json", "w", encoding="utf-8") as f:
             json.dump(
                 {
@@ -734,18 +727,17 @@ def process_video(request: ProcessRequest):
                 indent=2
             )
 
-        update_status(25, "Generating fancam")
+        update_status(25, "Generating fancam", done=False, error=None)
 
         subprocess.run(
             ["python", "src/tracking/face_match.py"],
             check=True
         )
 
-        print("DONE face_match.py")
-        print("fancam exists:", os.path.exists("output/fancam.mp4"))
-        print("fancam size:", os.path.getsize("output/fancam.mp4") if os.path.exists("output/fancam.mp4") else None)
+        if not os.path.exists("output/fancam.mp4") or os.path.getsize("output/fancam.mp4") == 0:
+            raise Exception("fancam.mp4 was not created or is empty")
 
-        update_status(55, "Converting video for web playback")
+        update_status(55, "Converting video for web playback", done=False, error=None)
 
         subprocess.run(
             [
@@ -762,32 +754,43 @@ def process_video(request: ProcessRequest):
         if not os.path.exists("output/fancam_web.mp4") or os.path.getsize("output/fancam_web.mp4") == 0:
             raise Exception("fancam_web.mp4 was not created or is empty")
 
-        update_status(75, "Running motion analysis")
+        update_status(75, "Running motion analysis", done=False, error=None)
 
         subprocess.run(
             ["python", "src/analysis/analyze_motion.py"],
             check=True
         )
 
-        update_status(100, "Complete", done=True)
-
-        # 브라우저 캐시 방지용 timestamp
         timestamp = int(time.time())
 
-        return {
-            "message": "processing complete",
+        process_status["result"] = {
             "fancam_url": f"http://127.0.0.1:8000/output/fancam_web.mp4?t={timestamp}",
             "energy_graph": f"http://127.0.0.1:8000/output/analysis/energy_graph.png?t={timestamp}",
             "angle_graph": f"http://127.0.0.1:8000/output/analysis/angle_graph.png?t={timestamp}",
             "trajectory_graph": f"http://127.0.0.1:8000/output/analysis/trajectory_3d.png?t={timestamp}",
         }
 
+        update_status(100, "Complete", done=True, error=None)
+
     except Exception as e:
         update_status(100, "Processing failed", done=True, error=str(e))
-        return {
-            "message": "processing failed",
-            "error": str(e)
-        }
+
+
+
+@app.post("/process")
+def process_video(request: ProcessRequest, background_tasks: BackgroundTasks):
+    update_status(0, "Starting process", done=False, error=None)
+
+    process_status["result"] = None
+
+    background_tasks.add_task(
+        run_process_task,
+        request.face_id
+    )
+
+    return {
+        "message": "processing started"
+    }
 
     
 @app.get("/analysis-results")
