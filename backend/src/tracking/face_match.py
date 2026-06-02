@@ -13,10 +13,11 @@ DISPLAY_SCALE = 0.7
 SIMILARITY_THRESHOLD = 0.35
 HISTORY_SIZE = 8
 MAX_LOST_FRAMES = 12
+DETECT_EVERY_N_FRAMES = 2
 
 FANCAM_SIZE = (720, 1280)  # width, height
-BBOX_SMOOTH_ALPHA = 0.13
-CROP_SMOOTH_ALPHA = 0.06
+BBOX_SMOOTH_ALPHA = 0.35
+CROP_SMOOTH_ALPHA = 0.25
 EMBEDDING_UPDATE_ALPHA = 0.02
 
 mp_face_detection = mp.solutions.face_detection
@@ -105,25 +106,57 @@ def crop_face(image, bbox, margin=0.8):
     return image[y1:y2, x1:x2]
 
 
-def make_fancam_crop(frame, bbox, output_size=FANCAM_SIZE, padding=8.0):
+def make_fancam_crop(frame, bbox, output_size=FANCAM_SIZE):
     frame_h, frame_w, _ = frame.shape
     x, y, w, h = bbox
 
-    cx = x + w / 2
-    cy = y + h / 2
+    # -----------------------------
+    # 얼굴 bbox 기준 비대칭 확장
+    # -----------------------------
+    side_expand = 4.0     # 좌우 확장
+    top_expand = 2.5      # 위쪽은 적게
+    bottom_expand = 9.0   # 아래쪽은 많이 (전신용)
 
-    crop_h = int(h * padding)
-    crop_w = int(crop_h * output_size[0] / output_size[1])
+    x1 = int(x - w * side_expand)
+    x2 = int(x + w + w * side_expand)
 
-    # 얼굴보다 아래쪽, 즉 상반신/전신 쪽을 더 포함
-    cy = cy + h * 3.0
+    y1 = int(y - h * top_expand)
+    y2 = int(y + h + h * bottom_expand)
 
-    x1 = int(cx - crop_w / 2)
-    y1 = int(cy - crop_h / 2)
+    crop_w = x2 - x1
+    crop_h = y2 - y1
 
-    # 여기서 프레임 안으로 clamp하지 말 것
-    # 프레임 밖으로 나간 부분은 crop_frame_with_padding()이 처리함
-    return None, (x1, y1, crop_w, crop_h)
+    # -----------------------------
+    # output_size 비율 맞추기
+    # -----------------------------
+    target_ratio = output_size[0] / output_size[1]   # width / height
+    current_ratio = crop_w / crop_h
+
+    if current_ratio < target_ratio:
+        # 너무 세로로 길면 폭을 더 넓힘
+        new_crop_w = int(crop_h * target_ratio)
+        extra_w = new_crop_w - crop_w
+        x1 -= extra_w // 2
+        x2 += extra_w - (extra_w // 2)
+
+    elif current_ratio > target_ratio:
+        # 너무 가로로 넓으면 높이를 더 늘림
+        new_crop_h = int(crop_w / target_ratio)
+        extra_h = new_crop_h - crop_h
+
+        # 추가 높이도 아래쪽으로 더 많이 배분
+        extra_top = int(extra_h * 0.25)
+        extra_bottom = extra_h - extra_top
+
+        y1 -= extra_top
+        y2 += extra_bottom
+
+    final_w = x2 - x1
+    final_h = y2 - y1
+
+    # 여기서는 clamp하지 않고 그대로 넘김
+    # crop_frame_with_padding()에서 프레임 밖 영역 처리
+    return None, (x1, y1, final_w, final_h)
 
 
 def get_face_embedding(face_img, face_mesh):
@@ -388,12 +421,16 @@ def run_face_matching(video_path):
     last_bbox = None
     fancam_writer = None
     crop_bbox = None
+    frame_idx = 0
+    last_faces = []
 
     while True:
         ret, frame_original = cap.read()
 
         if not ret:
             break
+
+        frame_idx += 1
 
         frame_display = cv2.resize(
             frame_original,
@@ -402,72 +439,84 @@ def run_face_matching(video_path):
             fy=DISPLAY_SCALE
         )
 
-        faces = detect_faces_with_insightface(
-            frame_original,
-            face_recognizer,
-            min_det_score=0.30
+                
+        # 3프레임마다만 InsightFace 실행
+        should_detect = (
+            frame_idx == 1
+            or frame_idx % DETECT_EVERY_N_FRAMES == 0
+            or last_bbox is None
         )
 
+        faces = []
         candidates = []
 
-        for face in faces:
-            bbox_original = face["bbox_original"]
-            embedding = face["embedding"]
+        if should_detect:
+            faces = detect_faces_with_insightface(
+                frame_original,
+                face_recognizer,
+                min_det_score=0.30
+            )
 
-            if embedding is None:
-                continue
+            last_faces = faces
 
-            similarity = cosine_similarity(reference_embedding, embedding)
+            for face in faces:
+                bbox_original = face["bbox_original"]
+                embedding = face["embedding"]
 
-            distance_bonus = 0.0
+                similarity = cosine_similarity(reference_embedding, embedding)
 
-            if last_bbox is not None:
-                current_center = bbox_center(bbox_original)
-                previous_center = bbox_center(last_bbox)
-                distance = np.linalg.norm(current_center - previous_center)
+                distance_bonus = 0.0
 
-                # InsightFace similarity를 우선하므로 위치 보너스는 약하게
-                distance_bonus = max(0.0, 0.05 - distance / 1000)
+                if last_bbox is not None:
+                    current_center = bbox_center(bbox_original)
+                    previous_center = bbox_center(last_bbox)
+                    distance = np.linalg.norm(current_center - previous_center)
 
-            final_score = similarity + distance_bonus
+                    # 위치 보너스는 약하게만 사용
+                    distance_bonus = max(0.0, 0.05 - distance / 1000)
 
-            x, y, w, h = bbox_original
-            bbox_display = (int(x * DISPLAY_SCALE), int(y * DISPLAY_SCALE), int(w * DISPLAY_SCALE), int(h * DISPLAY_SCALE))
+                final_score = similarity + distance_bonus
 
-            candidates.append({
-                "bbox_original": bbox_original,
-                "bbox_display": bbox_display,
-                "embedding": embedding,
-                "similarity": similarity,
-                "final_score": final_score
-            })
-
-        best_candidate = None
-
-        if candidates:
-            best_candidate = max(candidates, key=lambda c: c["similarity"])
-
+                candidates.append({
+                    "bbox_original": bbox_original,
+                    "embedding": embedding,
+                    "similarity": similarity,
+                    "final_score": final_score
+                })
+        else:
+            # 탐지하지 않는 프레임은 이전 bbox를 그대로 사용
+            faces = last_faces
+        
         selected_bbox = None
-        selected_bbox_display = None
         selected_similarity = None
         selected_embedding = None
 
-        if best_candidate is not None:
-            raw_similarity = best_candidate["similarity"]
-            similarity_history.append(raw_similarity)
+        if should_detect:
+            best_candidate = None
 
-            avg_similarity = np.mean(similarity_history)
+            if candidates:
+                best_candidate = max(candidates, key=lambda c: c["similarity"])
 
-            if raw_similarity >= SIMILARITY_THRESHOLD:
-                selected_bbox = best_candidate["bbox_original"]
-                selected_bbox_display = best_candidate["bbox_display"]
-                selected_similarity = raw_similarity
-                selected_embedding = best_candidate["embedding"]
-                lost_frames = 0
+            if best_candidate is not None:
+                raw_similarity = best_candidate["similarity"]
+                similarity_history.append(raw_similarity)
+
+                if raw_similarity >= SIMILARITY_THRESHOLD:
+                    selected_bbox = best_candidate["bbox_original"]
+                    selected_similarity = raw_similarity
+                    selected_embedding = best_candidate["embedding"]
+                    lost_frames = 0
+                else:
+                    lost_frames += 1
             else:
                 lost_frames += 1
+
         else:
-            lost_frames += 1
+            # 탐지하지 않는 프레임은 이전 bbox 그대로 사용
+            if last_bbox is not None:
+                selected_bbox = last_bbox
+                selected_similarity = None
+                selected_embedding = None
 
         if selected_bbox is None and last_bbox is not None and lost_frames <= MAX_LOST_FRAMES:
             selected_bbox = last_bbox
@@ -500,7 +549,6 @@ def run_face_matching(video_path):
                 frame_original,
                 selected_bbox,
                 output_size=FANCAM_SIZE,
-                padding=7.0
             )
 
             crop_bbox = smooth_crop_bbox(crop_bbox, raw_crop_bbox)

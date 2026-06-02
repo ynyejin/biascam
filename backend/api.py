@@ -13,6 +13,7 @@ import cv2
 import subprocess
 import mediapipe as mp
 import numpy as np
+import time
 
 app = FastAPI()
 
@@ -729,15 +730,21 @@ def run_process_task(face_id: int):
 
         update_status(25, "Generating fancam", done=False, error=None)
 
+        start = time.time()
+
         subprocess.run(
             ["python", "src/tracking/face_match.py"],
             check=True
         )
 
+        print("face_match time:", round(time.time() - start, 2), "sec")
+
         if not os.path.exists("output/fancam.mp4") or os.path.getsize("output/fancam.mp4") == 0:
             raise Exception("fancam.mp4 was not created or is empty")
 
         update_status(55, "Converting video for web playback", done=False, error=None)
+
+        start = time.time()
 
         subprocess.run(
             [
@@ -751,15 +758,21 @@ def run_process_task(face_id: int):
             check=True
         )
 
+        print("ffmpeg time:", round(time.time() - start, 2), "sec")
+
         if not os.path.exists("output/fancam_web.mp4") or os.path.getsize("output/fancam_web.mp4") == 0:
             raise Exception("fancam_web.mp4 was not created or is empty")
 
         update_status(75, "Running motion analysis", done=False, error=None)
 
+        start = time.time()
+
         subprocess.run(
             ["python", "src/analysis/analyze_motion.py"],
             check=True
         )
+
+        print("analysis time:", round(time.time() - start, 2), "sec")
 
         timestamp = int(time.time())
 
