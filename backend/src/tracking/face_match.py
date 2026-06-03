@@ -17,8 +17,12 @@ DETECT_EVERY_N_FRAMES = 2
 
 FANCAM_SIZE = (720, 1280)  # width, height
 BBOX_SMOOTH_ALPHA = 0.35
-CROP_SMOOTH_ALPHA = 0.25
+CROP_SMOOTH_ALPHA = 0.15
 EMBEDDING_UPDATE_ALPHA = 0.02
+
+SIMILARITY_THRESHOLD = 0.40
+SIMILARITY_MARGIN = 0.05
+MAX_JUMP_DISTANCE = 250
 
 mp_face_detection = mp.solutions.face_detection
 mp_face_mesh = mp.solutions.face_mesh
@@ -268,6 +272,34 @@ def smooth_crop_bbox(prev_bbox, new_bbox, alpha=CROP_SMOOTH_ALPHA):
     return (x, y, w, h)
 
 
+def apply_dead_zone(prev_bbox, new_bbox, threshold=25):
+    if prev_bbox is None:
+        return new_bbox
+
+    if new_bbox is None:
+        return prev_bbox
+
+    px, py, pw, ph = prev_bbox
+    nx, ny, nw, nh = new_bbox
+
+    prev_cx = px + pw / 2
+    prev_cy = py + ph / 2
+
+    new_cx = nx + nw / 2
+    new_cy = ny + nh / 2
+
+    distance = np.sqrt(
+        (new_cx - prev_cx) ** 2 +
+        (new_cy - prev_cy) ** 2
+    )
+
+    # crop 중심 이동이 threshold보다 작으면 이전 crop 유지
+    if distance < threshold:
+        return prev_bbox
+
+    return new_bbox
+
+
 def point_inside_bbox(px, py, bbox):
     x, y, w, h = bbox
     return x <= px <= x + w and y <= py <= y + h
@@ -423,6 +455,18 @@ def run_face_matching(video_path):
     crop_bbox = None
     frame_idx = 0
     last_faces = []
+    last_fancam_frame = None
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    fancam_writer = cv2.VideoWriter(
+        OUTPUT_FANCAM_PATH,
+        fourcc,
+        original_fps,
+        FANCAM_SIZE
+    )
+
+    input_frame_count = 0
+    output_frame_count = 0
 
     while True:
         ret, frame_original = cap.read()
@@ -431,6 +475,7 @@ def run_face_matching(video_path):
             break
 
         frame_idx += 1
+        input_frame_count += 1
 
         frame_display = cv2.resize(
             frame_original,
@@ -494,19 +539,44 @@ def run_face_matching(video_path):
         if should_detect:
             best_candidate = None
 
-            if candidates:
-                best_candidate = max(candidates, key=lambda c: c["similarity"])
+            # last_bbox가 있으면 너무 멀리 떨어진 후보는 제거
+            filtered_candidates = []
 
-            if best_candidate is not None:
+            for candidate in candidates:
+                if last_bbox is not None:
+                    current_center = bbox_center(candidate["bbox_original"])
+                    previous_center = bbox_center(last_bbox)
+                    distance = np.linalg.norm(current_center - previous_center)
+
+                    if distance > MAX_JUMP_DISTANCE:
+                        continue
+
+                filtered_candidates.append(candidate)
+
+            if filtered_candidates:
+                filtered_candidates = sorted(
+                    filtered_candidates,
+                    key=lambda c: c["similarity"],
+                    reverse=True
+                )
+
+                best_candidate = filtered_candidates[0]
+                second_similarity = (
+                    filtered_candidates[1]["similarity"]
+                    if len(filtered_candidates) > 1
+                    else -1.0
+                )
+
                 raw_similarity = best_candidate["similarity"]
-                similarity_history.append(raw_similarity)
+                margin = raw_similarity - second_similarity
 
-                if raw_similarity >= SIMILARITY_THRESHOLD:
+                if raw_similarity >= SIMILARITY_THRESHOLD and margin >= SIMILARITY_MARGIN:
                     selected_bbox = best_candidate["bbox_original"]
                     selected_similarity = raw_similarity
                     selected_embedding = best_candidate["embedding"]
                     lost_frames = 0
                 else:
+                    # 확신이 없으면 새 후보로 갈아타지 않음
                     lost_frames += 1
             else:
                 lost_frames += 1
@@ -525,25 +595,29 @@ def run_face_matching(video_path):
         if lost_frames > MAX_LOST_FRAMES and candidates:
             print("재탐색 시도")
 
-            best_recovery = max(candidates, key=lambda c: c["final_score"])
+            recovery_candidates = sorted(
+                candidates,
+                key=lambda c: c["similarity"],
+                reverse=True
+            )
 
-            if best_recovery is not None:
+            best_recovery = recovery_candidates[0]
+
+            if best_recovery["similarity"] >= SIMILARITY_THRESHOLD + 0.10:
                 print("재탐색 성공")
                 selected_bbox = best_recovery["bbox_original"]
                 selected_similarity = best_recovery["similarity"]
                 selected_embedding = best_recovery["embedding"]
                 lost_frames = 0
+            else:
+                print("재탐색 보류")
 
+        fancam_frame = None
+
+        # 1. 선택 멤버 bbox를 새로 찾은 경우
         if selected_bbox is not None:
             selected_bbox = smooth_bbox(last_bbox, selected_bbox)
             last_bbox = selected_bbox
-
-            # if selected_embedding is not None and selected_similarity is not None:
-                # if selected_similarity > 0.8 and lost_frames == 0:
-                #     reference_embedding = update_reference_embedding(
-                #         reference_embedding,
-                #         selected_embedding
-                #     )
 
             raw_crop, raw_crop_bbox = make_fancam_crop(
                 frame_original,
@@ -551,37 +625,75 @@ def run_face_matching(video_path):
                 output_size=FANCAM_SIZE,
             )
 
-            crop_bbox = smooth_crop_bbox(crop_bbox, raw_crop_bbox)
+            raw_crop_bbox = apply_dead_zone(
+                crop_bbox,
+                raw_crop_bbox,
+                threshold=25
+            )
 
+            crop_bbox = smooth_crop_bbox(
+                crop_bbox,
+                raw_crop_bbox
+            )
+
+        # 2. 얼굴을 못 찾은 프레임이면, 이전 crop_bbox 위치를 현재 프레임에 그대로 적용
+        if crop_bbox is not None:
             fancam_frame = crop_frame_with_padding(
                 frame_original,
                 crop_bbox,
                 output_size=FANCAM_SIZE
             )
 
-            if fancam_frame is not None:
-                if fancam_writer is None:
-                    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                    fancam_writer = cv2.VideoWriter(
-                        OUTPUT_FANCAM_PATH,
-                        fourcc,
-                        original_fps,
-                        FANCAM_SIZE
-                    )
+        # 3. 그래도 없으면, 정말 초기 상태라서 이전 crop도 없는 것
+        #    이 경우에는 화면 중앙 crop을 임시로 사용
+        if fancam_frame is None:
+            frame_h, frame_w, _ = frame_original.shape
 
-                fancam_writer.write(fancam_frame)
+            center_crop_h = frame_h
+            center_crop_w = int(center_crop_h * FANCAM_SIZE[0] / FANCAM_SIZE[1])
 
-                # 표시용 crop box는 display scale로 변환해서 그림
-                x, y, w, h = crop_bbox
-                x2 = x + w
-                y2 = y + h
+            if center_crop_w > frame_w:
+                center_crop_w = frame_w
+                center_crop_h = int(center_crop_w * FANCAM_SIZE[1] / FANCAM_SIZE[0])
 
-                dx1 = int(max(0, x) * DISPLAY_SCALE)
-                dy1 = int(max(0, y) * DISPLAY_SCALE)
-                dx2 = int(min(frame_original.shape[1], x2) * DISPLAY_SCALE)
-                dy2 = int(min(frame_original.shape[0], y2) * DISPLAY_SCALE)
+                center_x = frame_w // 2
+                center_y = frame_h // 2
 
-                cv2.rectangle(frame_display, (dx1, dy1), (dx2, dy2), (255, 200, 0), 2)
+                center_bbox = (
+                    int(center_x - center_crop_w / 2),
+                    int(center_y - center_crop_h / 2),
+                    int(center_crop_w),
+                    int(center_crop_h)
+                )
+
+                fancam_frame = crop_frame_with_padding(
+                    frame_original,
+                    center_bbox,
+                    output_size=FANCAM_SIZE
+                )
+
+        # 4. 그래도 None이면 검은 화면이라도 생성
+        if fancam_frame is None:
+            fancam_frame = np.zeros(
+                (FANCAM_SIZE[1], FANCAM_SIZE[0], 3),
+                dtype=np.uint8                )
+
+        # 5. 여기서 매 프레임 반드시 write
+        fancam_writer.write(fancam_frame)
+        output_frame_count += 1
+
+        # 표시용 crop box는 display scale로 변환해서 그림
+        if crop_bbox is not None:
+            x, y, w, h = crop_bbox
+            x2 = x + w
+            y2 = y + h
+
+            dx1 = int(max(0, x) * DISPLAY_SCALE)
+            dy1 = int(max(0, y) * DISPLAY_SCALE)
+            dx2 = int(min(frame_original.shape[1], x2) * DISPLAY_SCALE)                
+            dy2 = int(min(frame_original.shape[0], y2) * DISPLAY_SCALE)
+
+            cv2.rectangle(frame_display, (dx1, dy1), (dx2, dy2), (255, 200, 0), 2)
 
         for face in faces:
             x, y, w, h = face["bbox_original"]
@@ -634,6 +746,9 @@ def run_face_matching(video_path):
 
     if fancam_writer is not None:
         fancam_writer.release()
+
+    print("input_frame_count:", input_frame_count)
+    print("output_frame_count:", output_frame_count)
 
     cap.release()
 
