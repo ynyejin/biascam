@@ -13,11 +13,15 @@ DISPLAY_SCALE = 0.7
 SIMILARITY_THRESHOLD = 0.35
 HISTORY_SIZE = 8
 MAX_LOST_FRAMES = 12
-DETECT_EVERY_N_FRAMES = 2
+DETECT_EVERY_N_FRAMES = 3
+DETECT_SCALE = 0.75 
+
+FAST_MOVE_DISTANCE = 80
+FAST_DETECT_EVERY_N_FRAMES = 2
 
 FANCAM_SIZE = (720, 1280)  # width, height
 BBOX_SMOOTH_ALPHA = 0.35
-CROP_SMOOTH_ALPHA = 0.15
+CROP_SMOOTH_ALPHA = 0.17
 EMBEDDING_UPDATE_ALPHA = 0.02
 
 SIMILARITY_THRESHOLD = 0.40
@@ -456,6 +460,8 @@ def run_face_matching(video_path):
     frame_idx = 0
     last_faces = []
     last_fancam_frame = None
+    last_center = None
+    fast_motion_mode = False
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     fancam_writer = cv2.VideoWriter(
@@ -467,6 +473,7 @@ def run_face_matching(video_path):
 
     input_frame_count = 0
     output_frame_count = 0
+    insightface_call_count = 0
 
     while True:
         ret, frame_original = cap.read()
@@ -496,11 +503,40 @@ def run_face_matching(video_path):
         candidates = []
 
         if should_detect:
-            faces = detect_faces_with_insightface(
+            current_detect_scale = DETECT_SCALE
+
+            frame_small = cv2.resize(
                 frame_original,
+                None,
+                fx=current_detect_scale,
+                fy=current_detect_scale
+            )
+
+            insightface_call_count += 1
+
+            faces_small = detect_faces_with_insightface(
+                frame_small,
                 face_recognizer,
                 min_det_score=0.30
             )
+
+            # bbox 좌표를 원본 해상도로 역산
+            faces = []
+
+            for face in faces_small:
+                x, y, w, h = face["bbox_original"]
+
+                bbox_original = (
+                    int(x / current_detect_scale),
+                    int(y / current_detect_scale),
+                    int(w / current_detect_scale),
+                    int(h / current_detect_scale)
+                )
+                faces.append({
+                    "bbox_original": bbox_original,
+                    "embedding": face["embedding"],
+                    "det_score": face.get("det_score", 1.0)
+                })
 
             last_faces = faces
 
@@ -616,8 +652,17 @@ def run_face_matching(video_path):
 
         # 1. 선택 멤버 bbox를 새로 찾은 경우
         if selected_bbox is not None:
+            current_center = bbox_center(selected_bbox)
+
+            if last_center is not None:
+                move_distance = np.linalg.norm(current_center - last_center)
+                fast_motion_mode = move_distance > FAST_MOVE_DISTANCE
+            else:
+                fast_motion_mode = False
+
             selected_bbox = smooth_bbox(last_bbox, selected_bbox)
             last_bbox = selected_bbox
+            last_center = bbox_center(selected_bbox)
 
             raw_crop, raw_crop_bbox = make_fancam_crop(
                 frame_original,
@@ -628,7 +673,7 @@ def run_face_matching(video_path):
             raw_crop_bbox = apply_dead_zone(
                 crop_bbox,
                 raw_crop_bbox,
-                threshold=25
+                threshold=20
             )
 
             crop_bbox = smooth_crop_bbox(
@@ -747,6 +792,7 @@ def run_face_matching(video_path):
     if fancam_writer is not None:
         fancam_writer.release()
 
+    print("insightface_call_count:", insightface_call_count)
     print("input_frame_count:", input_frame_count)
     print("output_frame_count:", output_frame_count)
 
