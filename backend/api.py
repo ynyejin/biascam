@@ -149,6 +149,9 @@ def score_person_crop(x, y, w, h, frame_w, frame_h, conf):
 class ProcessRequest(BaseModel):
     face_id: int
 
+class SampleUploadRequest(BaseModel):
+    sample_id: str
+
 @app.get("/")
 def root():
     return {"message": "BiasCam API running"}
@@ -189,6 +192,79 @@ async def upload_video(file: UploadFile = File(...)):
         "message": "upload success",
         "video_path": CURRENT_VIDEO_PATH
     }
+
+
+@app.post("/upload-sample")
+def upload_sample(request: SampleUploadRequest):
+
+    print("DETECT VIDEO PATH:", CURRENT_VIDEO_PATH)
+    print("DETECT VIDEO EXISTS:", os.path.exists(CURRENT_VIDEO_PATH))
+    print("DETECT VIDEO SIZE:", os.path.getsize(CURRENT_VIDEO_PATH))
+
+    try:
+        sample_map = {
+            "sample1": "data/samples/sample1.mov",
+            "sample2": "data/samples/sample2.mov",
+            "sample3": "data/samples/sample3.mov",
+        }
+
+        if request.sample_id not in sample_map:
+            raise Exception("Invalid sample id")
+
+        sample_path = sample_map[request.sample_id]
+
+        if not os.path.exists(sample_path):
+            raise Exception(f"Sample video not found: {sample_path}")
+
+        os.makedirs("data/input", exist_ok=True)
+        os.makedirs("output/faces", exist_ok=True)
+
+        target_path = "data/input/uploaded_video.mp4"
+
+        print("UPLOAD SAMPLE CALLED:", request.sample_id)
+        print("sample_path:", sample_path)
+        print("sample_exists:", os.path.exists(sample_path))
+        print("target_path:", target_path)
+
+        shutil.copyfile(sample_path, target_path)
+
+        print("sample_size:", os.path.getsize(sample_path))
+        print("target_size:", os.path.getsize(target_path))
+        print("sample copied")
+
+        # 이전 얼굴 후보 삭제
+        for filename in os.listdir("output/faces"):
+            file_path = os.path.join("output/faces", filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+
+        # 이전 결과 영상/분석 파일도 가능하면 삭제
+        old_outputs = [
+            "output/fancam.mp4",
+            "output/fancam_web.mp4",
+            "selected_member.json",
+            "output/progress.json",
+        ]
+
+        for file_path in old_outputs:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        update_status(0, "Sample video loaded", done=False, error=None, result=None)
+
+        return {
+            "message": "sample upload complete",
+            "sample_id": request.sample_id,
+            "video_path": target_path,
+        }
+
+    except Exception as e:
+        update_status(100, "Sample upload failed", done=True, error=str(e), result=None)
+        return {
+            "message": "sample upload failed",
+            "error": str(e),
+        }
+    
 
 @app.post("/detect-faces")
 def detect_faces_from_video():

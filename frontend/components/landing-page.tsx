@@ -2,6 +2,7 @@
 
 import { motion } from "framer-motion"
 import { FloatingStickers } from "./floating-stickers"
+import { FloatingIdols } from "./floating-idols"
 
 interface LandingPageProps {
   onStart: () => void
@@ -11,6 +12,7 @@ export function LandingPage({ onStart }: LandingPageProps) {
   return (
     <div className="relative h-full w-full flex flex-col items-center justify-center">
       <FloatingStickers />
+      <FloatingIdols />
       
       {/* Main Title */}
       <motion.button
@@ -39,16 +41,6 @@ export function LandingPage({ onStart }: LandingPageProps) {
           }}
         />
       </motion.button>
-
-      {/* Subtitle */}
-      <motion.p
-        className="mt-8 text-muted-foreground text-sm md:text-base text-center max-w-md px-4"
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.4 }}
-      >
-        2026 AI Report on creating personalized fancams through computer vision
-      </motion.p>
 
       {/* CTA hint */}
       <motion.div

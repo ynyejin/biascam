@@ -123,35 +123,6 @@ const stickers = [
     rotation: 0,
     delay: 0.1,
   },
-  // Cute blob face
-  {
-    id: "blob",
-    content: (
-      <svg viewBox="0 0 100 100" className="w-full h-full">
-        <defs>
-          <linearGradient id="blobGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#ffecd2" />
-            <stop offset="100%" stopColor="#fcb69f" />
-          </linearGradient>
-        </defs>
-        <path
-          d="M50 10 C80 10 95 30 95 50 C95 75 75 90 50 90 C25 90 5 75 5 50 C5 25 20 10 50 10"
-          fill="url(#blobGrad)"
-        />
-        <circle cx="35" cy="45" r="5" fill="#333" />
-        <circle cx="65" cy="45" r="5" fill="#333" />
-        <ellipse cx="35" cy="43" rx="2" ry="1.5" fill="#fff" />
-        <ellipse cx="65" cy="43" rx="2" ry="1.5" fill="#fff" />
-        <path d="M40 65 Q50 75 60 65" stroke="#333" strokeWidth="3" fill="none" strokeLinecap="round" />
-        <ellipse cx="25" cy="55" rx="8" ry="5" fill="rgba(255,150,150,0.5)" />
-        <ellipse cx="75" cy="55" rx="8" ry="5" fill="rgba(255,150,150,0.5)" />
-      </svg>
-    ),
-    position: { bottom: "15%", left: "12%" },
-    size: "w-20 h-20",
-    rotation: 5,
-    delay: 0.3,
-  },
   // Polaroid placeholder
   {
     id: "polaroid",
