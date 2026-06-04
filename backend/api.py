@@ -8,6 +8,7 @@ from sklearn.cluster import DBSCAN
 from insightface.app import FaceAnalysis
 
 import os
+import json
 import shutil
 import cv2
 import subprocess
@@ -56,11 +57,29 @@ process_status = {
     "result": None
 }
 
-def update_status(progress, message, done=False, error=None):
+
+def update_status(progress, message, done=False, error=None, result=None):
     process_status["progress"] = progress
     process_status["message"] = message
     process_status["done"] = done
     process_status["error"] = error
+    process_status["result"] = result
+
+    os.makedirs("output", exist_ok=True)
+
+    with open("output/progress.json", "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "progress": progress,
+                "message": message,
+                "done": done,
+                "error": error,
+                "result": result
+            },
+            f,
+            ensure_ascii=False
+        )
+
 
 def clamp(value, min_value, max_value):
     return max(min_value, min(value, max_value))
@@ -670,6 +689,20 @@ def detect_faces_from_video():
 
 @app.get("/progress")
 def get_progress():
+    progress_file = "output/progress.json"
+
+    if os.path.exists(progress_file):
+        try:
+            with open(progress_file, "r", encoding="utf-8") as f:
+                file_status = json.load(f)
+
+            # 파일 진행률이 현재 상태보다 크면 파일 상태 우선
+            if file_status.get("progress", 0) >= process_status.get("progress", 0):
+                return file_status
+
+        except Exception:
+            pass
+
     return process_status
 
 
@@ -739,6 +772,8 @@ def run_process_task(face_id: int):
 
         print("face_match time:", round(time.time() - start, 2), "sec")
 
+        update_status(55, "Fancam generated", done=False, error=None)
+
         if not os.path.exists("output/fancam.mp4") or os.path.getsize("output/fancam.mp4") == 0:
             raise Exception("fancam.mp4 was not created or is empty")
 
@@ -774,19 +809,35 @@ def run_process_task(face_id: int):
 
         print("analysis time:", round(time.time() - start, 2), "sec")
 
-        timestamp = int(time.time())
-
-        process_status["result"] = {
-            "fancam_url": f"http://127.0.0.1:8000/output/fancam_web.mp4?t={timestamp}",
-            "energy_graph": f"http://127.0.0.1:8000/output/analysis/energy_graph.png?t={timestamp}",
-            "angle_graph": f"http://127.0.0.1:8000/output/analysis/angle_graph.png?t={timestamp}",
-            "trajectory_graph": f"http://127.0.0.1:8000/output/analysis/trajectory_3d.png?t={timestamp}",
+        result_data = {
+            "message": "processing complete",
+            "fancam_url": "http://127.0.0.1:8000/output/fancam_web.mp4",
+            "energy_graph": "http://127.0.0.1:8000/output/analysis/energy_graph.png",
+            "angle_graph": "http://127.0.0.1:8000/output/analysis/angle_graph.png",
+            "trajectory_graph": "http://127.0.0.1:8000/output/analysis/trajectory_3d.png",
         }
 
-        update_status(100, "Complete", done=True, error=None)
+        update_status(
+            100,
+            "Complete",
+            done=True,
+            error=None,
+            result=result_data
+        )
 
     except Exception as e:
-        update_status(100, "Processing failed", done=True, error=str(e))
+        update_status(
+        100,
+        "Processing failed",
+        done=True,
+        error=str(e),
+        result=None
+    )
+
+    return {
+        "message": "processing failed",
+        "error": str(e)
+    }
 
 
 

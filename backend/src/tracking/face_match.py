@@ -28,6 +28,8 @@ SIMILARITY_THRESHOLD = 0.40
 SIMILARITY_MARGIN = 0.05
 MAX_JUMP_DISTANCE = 250
 
+PROGRESS_FILE = "output/progress.json"
+
 mp_face_detection = mp.solutions.face_detection
 mp_face_mesh = mp.solutions.face_mesh
 
@@ -37,6 +39,19 @@ clicked_done = False
 os.makedirs("output", exist_ok=True)
 
 face_recognizer = None
+
+def write_progress(progress, message="Generating fancam...", done=False, error=None):
+    os.makedirs(os.path.dirname(PROGRESS_FILE), exist_ok=True)
+
+    data = {
+        "progress": progress,
+        "message": message,
+        "done": done,
+        "error": error
+    }
+
+    with open(PROGRESS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
 
 def get_face_recognizer():
     global face_recognizer
@@ -428,8 +443,12 @@ def run_face_matching(video_path):
     cap = cv2.VideoCapture(video_path)
 
     if not cap.isOpened():
-        print("영상을 열 수 없습니다.")
-        return
+        raise Exception("video open failed")
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    if total_frames <= 0:
+        total_frames = 1
 
     original_fps = cap.get(cv2.CAP_PROP_FPS)
     if original_fps == 0:
@@ -474,6 +493,7 @@ def run_face_matching(video_path):
     input_frame_count = 0
     output_frame_count = 0
     insightface_call_count = 0
+    last_progress = -1
 
     while True:
         ret, frame_original = cap.read()
@@ -483,6 +503,16 @@ def run_face_matching(video_path):
 
         frame_idx += 1
         input_frame_count += 1
+
+        tracking_progress = 25 + int((frame_idx / total_frames) * 30)
+        tracking_progress = min(tracking_progress, 54)
+
+        if tracking_progress != last_progress:
+            write_progress(
+                tracking_progress,
+                f"Generating fancam... {tracking_progress}%"
+            )
+            last_progress = tracking_progress
 
         frame_display = cv2.resize(
             frame_original,
