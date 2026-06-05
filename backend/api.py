@@ -203,9 +203,9 @@ def upload_sample(request: SampleUploadRequest):
 
     try:
         sample_map = {
-            "sample1": "data/samples/sample1.mov",
-            "sample2": "data/samples/sample2.mov",
-            "sample3": "data/samples/sample3.mov",
+            "sample1": "data/samples/sample1.mp4",
+            "sample2": "data/samples/sample2.mp4",
+            "sample3": "data/samples/sample3.mp4",
         }
 
         if request.sample_id not in sample_map:

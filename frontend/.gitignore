@@ -15,3 +15,6 @@ node_modules
 .DS_Store
 
 backend/selected_face.txt
+
+yolov8n.pt
+*.pt
