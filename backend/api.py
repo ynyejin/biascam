@@ -339,6 +339,34 @@ def detect_faces_from_video():
         ny2 = min(h, y2 + my)
 
         return image[ny1:ny2, nx1:nx2], [nx1, ny1, nx2, ny2]
+    
+    def make_square_card(image, size=256):
+        if image is None or image.size == 0:
+            return image
+
+        h, w = image.shape[:2]
+
+        side = max(h, w)
+
+        pad_top = (side - h) // 2
+        pad_bottom = side - h - pad_top
+        pad_left = (side - w) // 2
+        pad_right = side - w - pad_left
+
+        square = cv2.copyMakeBorder(
+            image,
+            pad_top,
+            pad_bottom,
+            pad_left,
+            pad_right,
+            cv2.BORDER_REPLICATE
+        )
+
+        return cv2.resize(
+            square,
+            (size, size),
+            interpolation=cv2.INTER_CUBIC
+        )
 
     def calc_blur_score(face_crop):
         if face_crop is None or face_crop.size == 0:
@@ -723,7 +751,13 @@ def detect_faces_from_video():
         face_filename = f"face_{idx}.jpg"
         face_path = os.path.join(FACE_DIR, face_filename)
 
-        cv2.imwrite(face_path, candidate["crop"])
+        card_img = make_square_card(candidate["crop"], size=256)
+
+        cv2.imwrite(
+            face_path,
+            card_img,
+            [cv2.IMWRITE_JPEG_QUALITY, 95]
+        )
 
         faces_result.append({
             "id": int(idx),
@@ -901,19 +935,21 @@ def run_process_task(face_id: int):
             result=result_data
         )
 
+        return result_data
+
     except Exception as e:
         update_status(
-        100,
-        "Processing failed",
-        done=True,
-        error=str(e),
-        result=None
-    )
+            100,
+            "Processing failed",
+            done=True,
+            error=str(e),
+            result=None
+        )
 
-    return {
-        "message": "processing failed",
-        "error": str(e)
-    }
+        return {
+            "message": "processing failed",
+            "error": str(e)
+        }
 
 
 

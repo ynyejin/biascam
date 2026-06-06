@@ -44,9 +44,6 @@ def run_face_detection(video_path):
                     # confidence 표시
                     score = int(detection.score[0] * 100)
 
-                    # 박스
-                    cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
-
                     # 텍스트
                     cv2.putText(
                         frame,
@@ -66,7 +63,3 @@ def run_face_detection(video_path):
 
     cap.release()
     cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    run_face_detection("data/input/test.mp4")
