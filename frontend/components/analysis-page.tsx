@@ -477,7 +477,7 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
             >
               <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
                 <FileText className="w-5 h-5 text-accent" />
-                AI Performance Summary
+                Motion Analysis Summary
               </h3>
               <div className="space-y-4 text-sm max-h-64 overflow-y-auto pr-2">
                 <div className="p-3 rounded-lg bg-accent/10 border-l-4 border-accent">
