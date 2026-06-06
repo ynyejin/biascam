@@ -15,7 +15,11 @@ REPORT_PATH = f"{OUTPUT_DIR}/motion_report.txt"
 
 ENERGY_GRAPH_PATH = f"{OUTPUT_DIR}/energy_graph.png"
 ANGLE_GRAPH_PATH = f"{OUTPUT_DIR}/angle_graph.png"
-TRAJECTORY_3D_PATH = f"{OUTPUT_DIR}/trajectory_3d.png"
+HEATMAP_GRAPH_PATH = f"{OUTPUT_DIR}/position_heatmap.png"
+
+ORIGINAL_VIDEO_PATH = "data/input/uploaded_video.mp4"
+STAGE_POSITION_CSV_PATH = f"{OUTPUT_DIR}/stage_position.csv"
+HEATMAP_GRAPH_PATH = f"{OUTPUT_DIR}/position_heatmap.png"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -205,51 +209,120 @@ def plot_angle_graph(angle_rows):
     plt.close()
 
 
-def plot_3d_trajectory(pose_rows):
-    target_joints = [
-        "left_wrist",
-        "right_wrist",
-        "left_ankle",
-        "right_ankle"
-    ]
+def plot_stage_position_heatmap(stage_position_csv, original_video_path):
+    cap = cv2.VideoCapture(original_video_path)
 
-    pose_data = {}
+    if not cap.isOpened():
+        print("원본 영상을 열 수 없어 히트맵을 생성할 수 없습니다.")
+        return {
+            "horizontal_range": 0.0,
+            "vertical_range": 0.0,
+            "point_count": 0
+        }
 
-    for frame, time, joint, x, y, z, visibility in pose_rows:
-        if joint not in target_joints:
-            continue
+    ret, bg_frame = cap.read()
 
-        if joint not in pose_data:
-            pose_data[joint] = {"x": [], "y": [], "z": [], "time": []}
+    if not ret:
+        print("원본 영상 첫 프레임을 읽을 수 없습니다.")
+        cap.release()
+        return {
+            "horizontal_range": 0.0,
+            "vertical_range": 0.0,
+            "point_count": 0
+        }
 
-        pose_data[joint]["x"].append(x)
-        pose_data[joint]["y"].append(y)
-        pose_data[joint]["z"].append(z)
-        pose_data[joint]["time"].append(time)
+    frame_h, frame_w = bg_frame.shape[:2]
+    cap.release()
 
-    fig = plt.figure(figsize=(12, 9))
-    ax = fig.add_subplot(111, projection="3d")
+    if not os.path.exists(stage_position_csv):
+        print("stage_position.csv가 없어 히트맵을 생성할 수 없습니다.")
+        return {
+            "horizontal_range": 0.0,
+            "vertical_range": 0.0,
+            "point_count": 0
+        }
 
-    for joint, data in pose_data.items():
-        ax.plot(
-            data["x"],
-            data["y"],
-            data["time"],
-            label=joint
+    centers = []
+
+    with open(stage_position_csv, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for row in reader:
+            try:
+                x = float(row["center_x"])
+                y = float(row["center_y"])
+            except Exception:
+                continue
+
+            if 0 <= x < frame_w and 0 <= y < frame_h:
+                centers.append((x, y))
+
+    heatmap = np.zeros((frame_h, frame_w), dtype=np.float32)
+
+    for x, y in centers:
+        cv2.circle(
+            heatmap,
+            (int(x), int(y)),
+            45,
+            1.0,
+            -1
         )
 
-    ax.set_title("BiasCam Pseudo-3D Joint Trajectory")
-    ax.set_xlabel("X Position")
-    ax.set_ylabel("Y Position")
-    ax.set_zlabel("Time (sec)")
-    ax.legend()
+    if len(centers) == 0:
+        print("히트맵 위치 데이터가 없습니다.")
+        overlay = bg_frame.copy()
+    else:
+        heatmap = cv2.GaussianBlur(heatmap, (101, 101), 0)
 
+        heatmap_norm = cv2.normalize(
+            heatmap,
+            None,
+            0,
+            255,
+            cv2.NORM_MINMAX
+        )
+
+        heatmap_color = cv2.applyColorMap(
+            heatmap_norm.astype(np.uint8),
+            cv2.COLORMAP_JET
+        )
+
+        overlay = cv2.addWeighted(
+            bg_frame,
+            0.45,
+            heatmap_color,
+            0.55,
+            0
+        )
+
+    overlay_rgb = cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)
+
+    plt.figure(figsize=(12, 7))
+    plt.imshow(overlay_rgb)
+    plt.title("Stage Position Heatmap")
+    plt.axis("off")
     plt.tight_layout()
-    plt.savefig(TRAJECTORY_3D_PATH, dpi=300)
+    plt.savefig(HEATMAP_GRAPH_PATH, dpi=300)
     plt.close()
 
+    if len(centers) > 1:
+        xs = [p[0] for p in centers]
+        ys = [p[1] for p in centers]
 
-def save_report(energy_rows, angle_rows):
+        horizontal_range = (max(xs) - min(xs)) / frame_w * 100
+        vertical_range = (max(ys) - min(ys)) / frame_h * 100
+    else:
+        horizontal_range = 0.0
+        vertical_range = 0.0
+
+    return {
+        "horizontal_range": float(horizontal_range),
+        "vertical_range": float(vertical_range),
+        "point_count": int(len(centers))
+    }
+
+
+def save_report(energy_rows, angle_rows, heatmap_stats=None):
     total_upper = sum(row[2] for row in energy_rows)
     total_lower = sum(row[3] for row in energy_rows)
     total_energy = sum(row[4] for row in energy_rows)
@@ -308,9 +381,14 @@ def save_report(energy_rows, angle_rows):
             f.write(f"  최소 각도: {np.min(values):.2f}도\n")
             f.write(f"  최대 각도: {np.max(values):.2f}도\n")
 
-        f.write("\n[3D 시각화 설명]\n")
-        f.write("본 프로젝트의 3D 궤적은 단일 카메라에서 실제 공간 좌표를 완전히 복원한 것이 아니라,\n")
-        f.write("MediaPipe Pose의 상대적 z값 및 시간축을 활용한 pseudo-3D motion visualization이다.\n")
+        f.write("\n[무대 점유 히트맵]\n")
+        f.write("MediaPipe Pose의 좌우 골반 좌표를 이용해 선택 멤버의 중심 위치를 추정하고,\n")
+        f.write("프레임별 위치를 누적하여 직캠 화면 내에서 많이 머문 영역을 히트맵으로 시각화하였다.\n")
+
+        if heatmap_stats is not None:
+            f.write(f"- 좌우 활동 범위: {heatmap_stats['horizontal_range']:.2f}%\n")
+            f.write(f"- 상하 활동 범위: {heatmap_stats['vertical_range']:.2f}%\n")
+            f.write(f"- 히트맵 누적 포인트 수: {heatmap_stats['point_count']}개\n")
 
 
 def run_motion_analysis(video_path=INPUT_VIDEO_PATH):
@@ -327,6 +405,15 @@ def run_motion_analysis(video_path=INPUT_VIDEO_PATH):
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    ret, first_frame = cap.read()
+
+    if ret:
+        first_frame = first_frame.copy()
+    else:
+        first_frame = None
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     pose_rows = []
     energy_rows = []
@@ -395,10 +482,16 @@ def run_motion_analysis(video_path=INPUT_VIDEO_PATH):
     cap.release()
 
     save_csv(pose_rows, energy_rows, angle_rows)
+
     plot_energy_graph(energy_rows)
     plot_angle_graph(angle_rows)
-    plot_3d_trajectory(pose_rows)
-    save_report(energy_rows, angle_rows)
+
+    heatmap_stats = plot_stage_position_heatmap(
+        STAGE_POSITION_CSV_PATH,
+        ORIGINAL_VIDEO_PATH
+    )
+
+    save_report(energy_rows, angle_rows, heatmap_stats)
 
     print("BiasCam 안무 분석 완료!")
     print(f"관절 데이터 저장: {POSE_CSV_PATH}")
@@ -406,7 +499,7 @@ def run_motion_analysis(video_path=INPUT_VIDEO_PATH):
     print(f"각도 데이터 저장: {ANGLE_CSV_PATH}")
     print(f"에너지 그래프 저장: {ENERGY_GRAPH_PATH}")
     print(f"각도 그래프 저장: {ANGLE_GRAPH_PATH}")
-    print(f"3D 궤적 그래프 저장: {TRAJECTORY_3D_PATH}")
+    print(f"무대 점유 히트맵 저장: {HEATMAP_GRAPH_PATH}")
     print(f"분석 리포트 저장: {REPORT_PATH}")
 
 

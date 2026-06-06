@@ -1,6 +1,5 @@
 "use client"
 
-import dynamic from "next/dynamic"
 import { useEffect, useState } from "react"
 import { motion } from "framer-motion"
 import {
@@ -60,7 +59,7 @@ interface AnalysisResultResponse {
   message: string
   energy_graph: string
   angle_graph: string
-  trajectory_graph: string
+  heatmap_graph: string
   report: string
 }
 
@@ -79,10 +78,7 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
   const [report, setReport] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-
-  const Plot = dynamic(() => import("react-plotly.js"), {
-    ssr: false,
-  })
+  const [heatmapGraph, setHeatmapGraph] = useState("")
 
   useEffect(() => {
     const fetchAnalysis = async () => {
@@ -137,6 +133,7 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
         setAngleData(Object.values(groupedAngles))
         setTrajectoryData(data.trajectory_data)
         setReport(result.report)
+        setHeatmapGraph(result.heatmap_graph)
       } catch (err) {
         console.error(err)
         setError("분석 결과를 불러오지 못했습니다.")
@@ -439,7 +436,7 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
               </div>
             </motion.div>
 
-            {/* 3D Trajectory Visualization */}
+            {/* Stage Position Heatmap */}
             <motion.div
               className="glass rounded-xl p-6"
               initial={{ opacity: 0, y: 20 }}
@@ -448,99 +445,27 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
             >
               <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2">
                 <Move3D className="w-5 h-5 text-accent" />
-                3D Movement Trajectory
+                Stage Position Heatmap
               </h3>
+
               <div className="h-64 flex items-center justify-center relative overflow-hidden rounded-lg bg-secondary/30">
-                {trajectoryData.length > 0 ? (
-                  <Plot
-                    data={[
-                      {
-                        name: "Left Wrist",
-                        x: trajectoryData.filter((p) => p.joint === "left_wrist").map((p) => p.x),
-                        y: trajectoryData.filter((p) => p.joint === "left_wrist").map((p) => p.y),
-                        z: trajectoryData.filter((p) => p.joint === "left_wrist").map((p) => p.z),
-                        type: "scatter3d",
-                        mode: "lines",
-                        line: { width: 6, color: "#ff6b9d" },
-                      },
-                      {
-                        name: "Right Wrist",
-                        x: trajectoryData.filter((p) => p.joint === "right_wrist").map((p) => p.x),
-                        y: trajectoryData.filter((p) => p.joint === "right_wrist").map((p) => p.y),
-                        z: trajectoryData.filter((p) => p.joint === "right_wrist").map((p) => p.z),
-                        type: "scatter3d",
-                        mode: "lines",
-                        line: { width: 6, color: "#4ecdc4" },
-                      },
-                      {
-                        name: "Left Ankle",
-                        x: trajectoryData.filter((p) => p.joint === "left_ankle").map((p) => p.x),
-                        y: trajectoryData.filter((p) => p.joint === "left_ankle").map((p) => p.y),
-                        z: trajectoryData.filter((p) => p.joint === "left_ankle").map((p) => p.z),
-                        type: "scatter3d",
-                        mode: "lines",
-                        line: { width: 6, color: "#ffd93d" },
-                      },
-                      {
-                        name: "Right Ankle",
-                        x: trajectoryData.filter((p) => p.joint === "right_ankle").map((p) => p.x),
-                        y: trajectoryData.filter((p) => p.joint === "right_ankle").map((p) => p.y),
-                        z: trajectoryData.filter((p) => p.joint === "right_ankle").map((p) => p.z),
-                        type: "scatter3d",
-                        mode: "lines",
-                        line: { width: 6, color: "#a78bfa" },
-                      },
-                    ]}
-                    layout={{
-                      paper_bgcolor: "rgba(0,0,0,0)",
-                      plot_bgcolor: "rgba(0,0,0,0)",
-
-                      scene: {
-                        bgcolor: "rgba(0,0,0,0)",
-
-                        xaxis: {
-                          color: "white",
-                        },
-
-                        yaxis: {
-                          color: "white",
-                        },
-
-                        zaxis: {
-                          color: "white",
-                        },
-
-                        camera: {
-                          eye: {
-                            x: 1.5,
-                            y: 1.5,
-                            z: 1,
-                          },
-                        },
-                      },
-
-                      margin: {
-                        l: 0,
-                        r: 0,
-                        t: 0,
-                        b: 0,
-                      },
-                    }}
-                    config={{
-                      displaylogo: false,
-                      responsive: true,
-                    }}
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                    }}
+                {heatmapGraph ? (
+                  <img
+                    src={`${heatmapGraph}?t=${Date.now()}`}
+                    alt="Stage Position Heatmap"
+                    className="h-full w-full object-contain"
                   />
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    No trajectory data available
+                    No heatmap available
                   </p>
                 )}
               </div>
+
+              <p className="text-xs text-muted-foreground mt-3 leading-relaxed">
+                This heatmap visualizes where the selected member stayed most often
+                based on hip-center positions estimated from pose landmarks.
+              </p>
             </motion.div>
 
             {/* Report Panel */}

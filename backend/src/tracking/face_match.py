@@ -1,11 +1,13 @@
 import os
 import cv2
+import csv
 import numpy as np
 import json
 from insightface.app import FaceAnalysis
 
 VIDEO_PATH = "data/input/uploaded_video.mp4"
 OUTPUT_FANCAM_PATH = "output/fancam.mp4"
+STAGE_POSITION_CSV_PATH = "output/analysis/stage_position.csv"
 
 DISPLAY_SCALE = 0.7
 MAX_LOST_FRAMES = 12
@@ -488,6 +490,7 @@ def run_face_matching(video_path):
     output_frame_count = 0
     insightface_call_count = 0
     last_progress = -1
+    stage_position_rows = []
 
     while True:
         ret, frame_original = cap.read()
@@ -680,6 +683,17 @@ def run_face_matching(video_path):
             last_bbox = selected_bbox
             last_center = bbox_center(selected_bbox)
 
+            if last_bbox is not None:
+                cx, cy = bbox_center(last_bbox)
+                time_sec = frame_idx / original_fps
+
+                stage_position_rows.append([
+                    frame_idx,
+                    time_sec,
+                    float(cx),
+                    float(cy)
+                ])
+
             raw_crop, raw_crop_bbox = make_fancam_crop(
                 frame_original,
                 selected_bbox,
@@ -749,6 +763,15 @@ def run_face_matching(video_path):
     print("insightface_call_count:", insightface_call_count)
     print("input_frame_count:", input_frame_count)
     print("output_frame_count:", output_frame_count)
+
+    os.makedirs("output/analysis", exist_ok=True)
+
+    with open(STAGE_POSITION_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["frame", "time", "center_x", "center_y"])
+        writer.writerows(stage_position_rows)
+
+    print(f"stage position saved: {STAGE_POSITION_CSV_PATH}")
 
     cap.release()
 

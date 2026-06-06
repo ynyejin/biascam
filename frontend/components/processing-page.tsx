@@ -12,7 +12,7 @@ interface ProcessResult {
   fancam_url: string
   energy_graph: string
   angle_graph: string
-  trajectory_graph: string
+  heatmap_graph: string
 }
 
 interface ProgressResponse {

@@ -924,7 +924,7 @@ def run_process_task(face_id: int):
             "fancam_url": "http://127.0.0.1:8000/output/fancam_web.mp4",
             "energy_graph": "http://127.0.0.1:8000/output/analysis/energy_graph.png",
             "angle_graph": "http://127.0.0.1:8000/output/analysis/angle_graph.png",
-            "trajectory_graph": "http://127.0.0.1:8000/output/analysis/trajectory_3d.png",
+            "heatmap_graph": "http://127.0.0.1:8000/output/analysis/position_heatmap.png",
         }
 
         update_status(
@@ -983,7 +983,7 @@ def get_analysis_results():
         "message": "analysis results",
         "energy_graph": "http://127.0.0.1:8000/output/analysis/energy_graph.png",
         "angle_graph": "http://127.0.0.1:8000/output/analysis/angle_graph.png",
-        "trajectory_graph": "http://127.0.0.1:8000/output/analysis/trajectory_3d.png",
+        "heatmap_graph": "http://127.0.0.1:8000/output/analysis/position_heatmap.png",
         "report": report_text
     }
 
