@@ -166,19 +166,99 @@ def plot_energy_graph(energy_rows):
     times = [row[1] for row in energy_rows]
     energies = [row[4] for row in energy_rows]
 
-    max_idx = int(np.argmax(energies))
+    if len(times) == 0 or len(energies) == 0:
+        print("에너지 그래프 생성 실패: energy 데이터 없음")
+        return
+
+    energies_np = np.array(energies, dtype=np.float32)
+
+    mean_energy = float(np.mean(energies_np))
+    std_energy = float(np.std(energies_np))
+
+    low_threshold = mean_energy
+    high_threshold = mean_energy + std_energy
+
+    max_idx = int(np.argmax(energies_np))
     max_time = times[max_idx]
     max_energy = energies[max_idx]
 
     plt.figure(figsize=(12, 6))
-    plt.plot(times, energies, linewidth=2)
-    plt.scatter(max_time, max_energy, s=100)
-    plt.axvline(max_time, linestyle="--")
-    plt.title("BiasCam Movement Energy")
+
+    for i in range(len(times) - 1):
+        current_time = [times[i], times[i + 1]]
+        current_energy = [energies[i], energies[i + 1]]
+
+        if energies[i] >= high_threshold:
+            color = "#ff4d6d"   # High intensity
+        elif energies[i] >= low_threshold:
+            color = "#ffb703"   # Medium intensity
+        else:
+            color = "#4cc9f0"   # Low intensity
+
+        plt.fill_between(
+            current_time,
+            current_energy,
+            color=color,
+            alpha=0.45
+        )
+
+    plt.plot(
+        times,
+        energies,
+        linewidth=1.8,
+        color="black",
+        alpha=0.8,
+        label="Movement energy"
+    )
+
+    plt.axhline(
+        mean_energy,
+        linestyle="--",
+        linewidth=1,
+        color="gray",
+        alpha=0.7,
+        label="Average"
+    )
+
+    plt.axhline(
+        high_threshold,
+        linestyle="--",
+        linewidth=1,
+        color="red",
+        alpha=0.6,
+        label="High intensity threshold"
+    )
+
+    plt.scatter(
+        max_time,
+        max_energy,
+        s=120,
+        color="red",
+        zorder=5,
+        label="Killing part"
+    )
+
+    plt.axvline(
+        max_time,
+        linestyle="--",
+        color="red",
+        alpha=0.7
+    )
+
+    plt.text(
+        max_time,
+        max_energy,
+        f"Killing Part\n{max_time:.2f}s",
+        fontsize=10,
+        ha="left",
+        va="bottom"
+    )
+
+    plt.title("BiasCam Movement Energy by Intensity Zone")
     plt.xlabel("Time (sec)")
-    plt.ylabel("Energy")
-    plt.text(max_time, max_energy, f"Killing Part\n{max_time:.2f}s")
-    plt.grid(True)
+    plt.ylabel("Movement Energy")
+    plt.grid(True, alpha=0.3)
+    plt.legend(loc="upper right")
     plt.tight_layout()
     plt.savefig(ENERGY_GRAPH_PATH, dpi=300)
     plt.close()
