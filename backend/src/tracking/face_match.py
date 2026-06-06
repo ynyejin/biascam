@@ -20,7 +20,7 @@ CROP_SMOOTH_ALPHA = 0.17
 
 SIMILARITY_THRESHOLD = 0.40
 SIMILARITY_MARGIN = 0.05
-MAX_JUMP_DISTANCE = 250
+MAX_JUMP_DISTANCE_RATIO = 0.15
 
 PROGRESS_FILE = "output/progress.json"
 
@@ -250,9 +250,54 @@ def select_target_face(cap, face_recognizer):
 
     faces = face_recognizer.get(selected_img)
 
+    # fallback: 선택 후보 이미지에서 얼굴 embedding 추출 실패 시
+    # selected_member.json에 저장된 원본 프레임에서 다시 탐색
     if faces is None or len(faces) == 0:
-        print("선택한 후보 이미지에서 InsightFace embedding 추출 실패")
-        return None, None
+        print("선택 후보 이미지에서 embedding 추출 실패, 원본 프레임 fallback 시도")
+
+        raw_bbox = selected["bbox"]
+        selected_bbox = xyxy_to_xywh(raw_bbox)
+
+        frame_idx = int(selected.get("frame_idx", 0))
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+        ret, frame = cap.read()
+
+        if not ret:
+            print("fallback 프레임 읽기 실패")
+            return None, None
+
+        faces_in_frame = face_recognizer.get(frame)
+
+        if faces_in_frame is None or len(faces_in_frame) == 0:
+            print("fallback 원본 프레임에서도 얼굴 탐지 실패")
+            return None, None
+
+        sx, sy, sw, sh = selected_bbox
+        selected_center = np.array([sx + sw / 2, sy + sh / 2])
+
+        best_face = None
+        best_dist = float("inf")
+
+        for face in faces_in_frame:
+            x1, y1, x2, y2 = face.bbox.astype(int)
+            face_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+
+            dist = np.linalg.norm(face_center - selected_center)
+
+            if dist < best_dist:
+                best_dist = dist
+                best_face = face
+
+        if best_face is None or best_face.normed_embedding is None:
+            print("fallback embedding 없음")
+            return None, None
+
+        reference_embedding = np.array(best_face.normed_embedding, dtype=np.float32)
+
+        print("fallback reference embedding 추출 성공")
+
+        return selected_bbox, reference_embedding
 
     # 후보 이미지 안에서 가장 큰 얼굴 사용
     face = max(
@@ -336,6 +381,12 @@ def run_face_matching(video_path):
     original_fps = cap.get(cv2.CAP_PROP_FPS)
     if original_fps == 0:
         original_fps = 30
+
+    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    frame_diag = np.sqrt(frame_w ** 2 + frame_h ** 2)
+    max_jump_distance = frame_diag * MAX_JUMP_DISTANCE_RATIO
 
     last_bbox = None
     lost_frames = 0
@@ -488,7 +539,7 @@ def run_face_matching(video_path):
                     previous_center = bbox_center(last_bbox)
                     distance = np.linalg.norm(current_center - previous_center)
 
-                    if distance > MAX_JUMP_DISTANCE:
+                    if distance > max_jump_distance:
                         continue
 
                 filtered_candidates.append(candidate)
