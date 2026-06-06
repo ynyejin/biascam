@@ -197,10 +197,6 @@ async def upload_video(file: UploadFile = File(...)):
 @app.post("/upload-sample")
 def upload_sample(request: SampleUploadRequest):
 
-    print("DETECT VIDEO PATH:", CURRENT_VIDEO_PATH)
-    print("DETECT VIDEO EXISTS:", os.path.exists(CURRENT_VIDEO_PATH))
-    print("DETECT VIDEO SIZE:", os.path.getsize(CURRENT_VIDEO_PATH))
-
     try:
         sample_map = {
             "sample1": "data/samples/sample1.mp4",
@@ -225,6 +221,8 @@ def upload_sample(request: SampleUploadRequest):
         print("sample_path:", sample_path)
         print("sample_exists:", os.path.exists(sample_path))
         print("target_path:", target_path)
+        print("target_exists:", os.path.exists(target_path))
+        print("target_size:", os.path.getsize(target_path))
 
         shutil.copyfile(sample_path, target_path)
 
