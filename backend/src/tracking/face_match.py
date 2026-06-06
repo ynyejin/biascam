@@ -223,6 +223,117 @@ def apply_dead_zone(prev_bbox, new_bbox, threshold=25):
     return new_bbox
 
 
+def normalize_embedding(embedding):
+    embedding = np.array(embedding, dtype=np.float32)
+
+    if embedding.size == 0:
+        return None
+
+    norm = np.linalg.norm(embedding)
+
+    if norm == 0:
+        return None
+
+    return embedding / norm
+
+
+def build_reference_embedding(
+    cap,
+    face_recognizer,
+    selected_img,
+    selected_bbox,
+    selected_frame_idx,
+    max_embeddings=5
+):
+    embeddings = []
+
+    # 1. 선택된 후보 이미지에서 먼저 embedding 추출
+    faces = face_recognizer.get(selected_img)
+
+    if faces is not None and len(faces) > 0:
+        face = max(
+            faces,
+            key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])
+        )
+
+        emb = normalize_embedding(face.normed_embedding)
+
+        if emb is not None:
+            embeddings.append(emb)
+            print("reference embedding added from selected image")
+
+    # 2. 선택된 원본 프레임 주변에서 추가 embedding 수집
+    sx, sy, sw, sh = selected_bbox
+    selected_center = np.array([sx + sw / 2, sy + sh / 2])
+
+    # 선택 프레임 주변만 탐색
+    frame_offsets = [-30, -15, 0, 15, 30, 45, 60]
+
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames <= 0:
+        total_frames = 1
+
+    for offset in frame_offsets:
+        if len(embeddings) >= max_embeddings:
+            break
+
+        target_frame_idx = selected_frame_idx + offset
+
+        if target_frame_idx < 0 or target_frame_idx >= total_frames:
+            continue
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame_idx)
+        ret, frame = cap.read()
+
+        if not ret:
+            continue
+
+        faces_in_frame = face_recognizer.get(frame)
+
+        if faces_in_frame is None or len(faces_in_frame) == 0:
+            continue
+
+        best_face = None
+        best_dist = float("inf")
+
+        for face in faces_in_frame:
+            if face.normed_embedding is None:
+                continue
+
+            x1, y1, x2, y2 = face.bbox.astype(int)
+            face_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+
+            dist = np.linalg.norm(face_center - selected_center)
+
+            if dist < best_dist:
+                best_dist = dist
+                best_face = face
+
+        # 너무 멀리 있는 얼굴은 다른 멤버일 가능성이 있어서 제외
+        max_allowed_dist = max(sw, sh) * 2.5
+
+        if best_face is not None and best_dist <= max_allowed_dist:
+            emb = normalize_embedding(best_face.normed_embedding)
+
+            if emb is not None:
+                embeddings.append(emb)
+                print(
+                    f"reference embedding added from frame {target_frame_idx}, "
+                    f"dist={best_dist:.1f}"
+                )
+
+    if len(embeddings) == 0:
+        return None
+
+    # 3. 여러 embedding 평균
+    mean_embedding = np.mean(embeddings, axis=0)
+    mean_embedding = normalize_embedding(mean_embedding)
+
+    print(f"reference embedding count: {len(embeddings)}")
+
+    return mean_embedding
+
+
 def select_target_face(cap, face_recognizer):
     selected_file = "selected_member.json"
 
@@ -235,7 +346,6 @@ def select_target_face(cap, face_recognizer):
 
     selected_id = int(selected["id"])
 
-    # 사용자가 실제로 선택한 후보 이미지
     selected_face_path = f"output/faces/face_{selected_id}.jpg"
 
     if not os.path.exists(selected_face_path):
@@ -248,72 +358,23 @@ def select_target_face(cap, face_recognizer):
         print("선택한 후보 이미지 읽기 실패")
         return None, None
 
-    faces = face_recognizer.get(selected_img)
-
-    # fallback: 선택 후보 이미지에서 얼굴 embedding 추출 실패 시
-    # selected_member.json에 저장된 원본 프레임에서 다시 탐색
-    if faces is None or len(faces) == 0:
-        print("선택 후보 이미지에서 embedding 추출 실패, 원본 프레임 fallback 시도")
-
-        raw_bbox = selected["bbox"]
-        selected_bbox = xyxy_to_xywh(raw_bbox)
-
-        frame_idx = int(selected.get("frame_idx", 0))
-
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-        ret, frame = cap.read()
-
-        if not ret:
-            print("fallback 프레임 읽기 실패")
-            return None, None
-
-        faces_in_frame = face_recognizer.get(frame)
-
-        if faces_in_frame is None or len(faces_in_frame) == 0:
-            print("fallback 원본 프레임에서도 얼굴 탐지 실패")
-            return None, None
-
-        sx, sy, sw, sh = selected_bbox
-        selected_center = np.array([sx + sw / 2, sy + sh / 2])
-
-        best_face = None
-        best_dist = float("inf")
-
-        for face in faces_in_frame:
-            x1, y1, x2, y2 = face.bbox.astype(int)
-            face_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
-
-            dist = np.linalg.norm(face_center - selected_center)
-
-            if dist < best_dist:
-                best_dist = dist
-                best_face = face
-
-        if best_face is None or best_face.normed_embedding is None:
-            print("fallback embedding 없음")
-            return None, None
-
-        reference_embedding = np.array(best_face.normed_embedding, dtype=np.float32)
-
-        print("fallback reference embedding 추출 성공")
-
-        return selected_bbox, reference_embedding
-
-    # 후보 이미지 안에서 가장 큰 얼굴 사용
-    face = max(
-        faces,
-        key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1])
-    )
-
-    reference_embedding = np.array(face.normed_embedding, dtype=np.float32)
-
-    if reference_embedding is None or reference_embedding.size == 0:
-        print("reference embedding 없음")
-        return None, None
-
-    # selected_member.json의 bbox는 [x1, y1, x2, y2]
     raw_bbox = selected["bbox"]
     selected_bbox = xyxy_to_xywh(raw_bbox)
+
+    selected_frame_idx = int(selected.get("frame_idx", 0))
+
+    reference_embedding = build_reference_embedding(
+        cap=cap,
+        face_recognizer=face_recognizer,
+        selected_img=selected_img,
+        selected_bbox=selected_bbox,
+        selected_frame_idx=selected_frame_idx,
+        max_embeddings=5
+    )
+
+    if reference_embedding is None or reference_embedding.size == 0:
+        print("reference embedding 생성 실패")
+        return None, None
 
     print("selected id:", selected_id)
     print("selected face image:", selected_face_path)
