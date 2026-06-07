@@ -184,6 +184,15 @@ export function ProcessingPage({ onComplete, setResultData }: ProcessingPageProp
             </div>
           </div>
 
+            {!error && (
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-center">
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  영상 길이와 해상도에 따라 처리 시간이 달라질 수 있으며,
+                  얼굴 추적과 모션 분석으로 인해 약 5–10분 정도 소요될 수 있습니다.
+                </p>
+              </div>
+            )}
+
           <div className="space-y-3">
             {processingSteps.map((step, index) => (
               <motion.div

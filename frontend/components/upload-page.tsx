@@ -183,6 +183,18 @@ export function UploadPage({ onUpload }: UploadPageProps) {
           )}
         </div>
 
+        <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm text-zinc-400">
+          <p className="font-semibold text-zinc-200 mb-2">
+            업로드 추천 조건
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <p>단체 무대처럼 여러 멤버가 함께 나오는 영상이 적합합니다.</p>
+            <p>처리 속도를 위해 20–40초 정도의 짧은 클립을 권장합니다.</p>
+            <p>얼굴이 밝고 선명하게 보일수록 멤버 선택과 직캠 생성 정확도가 높아집니다.</p>
+          </div>
+        </div>
+
         <div className="mt-10">
           <div className="flex items-center justify-center gap-4 mb-5">
             <div className="h-px w-20 bg-white/10" />

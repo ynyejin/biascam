@@ -1,7 +1,7 @@
 "use client"
 
 import { motion } from "framer-motion"
-import { ArrowLeft, Download, Share2, BarChart2 } from "lucide-react"
+import { ArrowLeft, Download, BarChart2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 
 interface ResultPageProps {
@@ -17,6 +17,37 @@ export function ResultPage({
   selectedFace,
   resultData,
 }: ResultPageProps) {
+
+  const handleDownload = async () => {
+    if (!resultData?.fancam_url) {
+      alert("다운로드할 직캠 영상이 없습니다.")
+      return
+    }
+
+    try {
+      const response = await fetch(resultData.fancam_url)
+
+      if (!response.ok) {
+        throw new Error("Download failed")
+      }
+
+      const blob = await response.blob()
+      const url = window.URL.createObjectURL(blob)
+
+      const link = document.createElement("a")
+      link.href = url
+      link.download = "biascam_fancam.mp4"
+      document.body.appendChild(link)
+      link.click()
+
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error(error)
+      alert("영상 다운로드에 실패했습니다.")
+    }
+  }
+
   return (
     <div className="relative h-full w-full flex flex-col items-center p-8 overflow-y-auto">
       {/* Back button */}
@@ -128,14 +159,14 @@ export function ResultPage({
             View Analysis
           </Button>
 
-          <Button size="lg" variant="outline" className="border-border">
+          <Button
+            size="lg"
+            variant="outline"
+            className="border-border"
+            onClick={handleDownload}
+          >
             <Download className="w-5 h-5 mr-2" />
             Download
-          </Button>
-
-          <Button size="lg" variant="outline" className="border-border">
-            <Share2 className="w-5 h-5 mr-2" />
-            Share
           </Button>
         </motion.div>
 
