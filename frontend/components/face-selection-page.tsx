@@ -113,7 +113,10 @@ export function FaceSelectionPage({ onSelect, onBack }: FaceSelectionPageProps) 
         </h2>
 
         <p className="text-muted-foreground text-lg">
-          Select the clearest face candidate for your favorite member
+          Choose the clearest face candidate for your bias!
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          같은 멤버가 여러 후보로 표시될 수 있으니, 가장 선명하고 정면에 가까운 얼굴을 선택해주세요.
         </p>
       </motion.div>
 
