@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { motion } from "framer-motion"
 import { Upload, Loader2, Video } from "lucide-react"
 
 interface UploadPageProps {
@@ -125,9 +126,9 @@ export function UploadPage({ onUpload }: UploadPageProps) {
   }
 
   return (
-    <section className="min-h-screen w-full bg-black text-white flex items-center justify-center px-6">
-      <div className="w-full max-w-3xl">
-        <div className="text-center mb-10">
+    <section className="h-screen w-full bg-black text-white overflow-y-auto px-6 py-10">
+      <div className="w-full max-w-3xl mx-auto pb-16">
+        <div className="text-center mb-8">
           <h1 className="text-5xl md:text-7xl font-black tracking-tight mb-4">
             Upload your stage
           </h1>
@@ -148,7 +149,7 @@ export function UploadPage({ onUpload }: UploadPageProps) {
           onClick={openFilePicker}
           onDrop={handleDrop}
           onDragOver={handleDragOver}
-          className="cursor-pointer rounded-3xl border border-white/15 bg-white/5 backdrop-blur-xl p-12 text-center hover:bg-white/10 transition"
+          className="cursor-pointer rounded-3xl border border-white/15 bg-white/5 backdrop-blur-xl p-8 md:p-10 text-center hover:bg-white/10 transition"
         >
           {isUploading ? (
             <div className="flex flex-col items-center gap-5">
@@ -168,10 +169,7 @@ export function UploadPage({ onUpload }: UploadPageProps) {
 
               <div>
                 <p className="text-2xl font-bold mb-2">
-                  Drag & drop your video
-                </p>
-                <p className="text-zinc-400">
-                  or click here to upload a group performance video
+                  click here to upload a group performance video
                 </p>
               </div>
 
@@ -195,13 +193,34 @@ export function UploadPage({ onUpload }: UploadPageProps) {
           </div>
         </div>
 
-        <div className="mt-10">
-          <div className="flex items-center justify-center gap-4 mb-5">
-            <div className="h-px w-20 bg-white/10" />
-            <p className="text-sm text-zinc-400">
-              Or try with a sample video
-            </p>
-            <div className="h-px w-20 bg-white/10" />
+        <div className="mt-3">
+          <div className="flex flex-col items-center justify-center gap-2 mb-5">
+            <div className="flex items-center justify-center gap-4">
+              <div className="h-px w-20 bg-white/10" />
+
+              <p className="text-base md:text-lg font-semibold text-zinc-200">
+                Or try with a sample video
+              </p>
+
+              <div className="h-px w-20 bg-white/10" />
+            </div>
+
+            <div className="flex items-center gap-16 text-pink-300 text-3xl ">
+              {["↙", "↓", "↘"].map((arrow, index) => (
+                <motion.span
+                  key={arrow}
+                  animate={{ y: [0, 6, 0] }}
+                  transition={{
+                    duration: 1.2,
+                    repeat: Infinity,
+                    ease: "easeInOut",
+                    delay: index * 0.15,
+                  }}
+                >
+                  {arrow}
+                </motion.span>
+              ))}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
