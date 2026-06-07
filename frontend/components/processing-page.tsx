@@ -50,7 +50,7 @@ export function ProcessingPage({ onComplete, setResultData }: ProcessingPageProp
         const data: ProgressResponse = await response.json()
 
         const nextProgress = Math.max(0, Math.min(100, data.progress ?? 0))
-        setProgress(nextProgress)
+        setProgress((prev) => Math.max(prev, nextProgress))
         setStatusMessage(data.message ?? "Processing...")
 
         const stepIndex = processingSteps.findIndex(
@@ -104,9 +104,9 @@ export function ProcessingPage({ onComplete, setResultData }: ProcessingPageProp
   }, [onComplete])
 
   return (
-    <div className="relative h-full w-full flex flex-col items-center justify-center p-8 scanlines">
+    <div className="relative h-screen w-full overflow-y-auto p-6 scanlines">
       <motion.div
-        className="relative w-full max-w-lg"
+        className="relative w-full max-w-lg mx-auto my-8"
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5 }}
