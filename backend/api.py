@@ -221,14 +221,13 @@ def upload_sample(request: SampleUploadRequest):
         print("sample_path:", sample_path)
         print("sample_exists:", os.path.exists(sample_path))
         print("target_path:", target_path)
-        print("target_exists:", os.path.exists(target_path))
-        print("target_size:", os.path.getsize(target_path))
 
         shutil.copyfile(sample_path, target_path)
 
-        print("sample_size:", os.path.getsize(sample_path))
-        print("target_size:", os.path.getsize(target_path))
         print("sample copied")
+        print("sample_size:", os.path.getsize(sample_path))
+        print("target_exists:", os.path.exists(target_path))
+        print("target_size:", os.path.getsize(target_path))
 
         # 이전 얼굴 후보 삭제
         for filename in os.listdir("output/faces"):
