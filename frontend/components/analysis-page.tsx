@@ -19,8 +19,9 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  AreaChart,
+  ComposedChart,
   Area,
+  Legend,
 } from "recharts"
 
 interface AnalysisPageProps {
@@ -28,11 +29,11 @@ interface AnalysisPageProps {
 }
 
 interface EnergyRow {
+  frame: number
   time: number
   upper_energy: number
   lower_energy: number
   total_energy: number
-  average?: number
 }
 
 interface AngleRow {
@@ -150,30 +151,57 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
       ? Math.max(...energyData.map((row) => row.total_energy))
       : 0
 
-  const totalMoves = energyData.length
+  const avgEnergy =
+    energyData.length > 0
+      ? energyData.reduce((sum, row) => sum + row.total_energy, 0) /
+        energyData.length
+      : 0
+
+  const energyStd =
+    energyData.length > 0
+      ? Math.sqrt(
+          energyData.reduce(
+            (sum, row) => sum + Math.pow(row.total_energy - avgEnergy, 2),
+            0
+          ) / energyData.length
+        )
+      : 0
+
+  const highIntensityThreshold = avgEnergy + energyStd
+
+  const highIntensityRatio =
+    energyData.length > 0
+      ? (energyData.filter(
+          (row) => row.total_energy >= highIntensityThreshold
+        ).length /
+          energyData.length) *
+        100
+      : 0
+
+  const totalFrames = energyData.length
 
   const analysisMetrics = [
     {
       label: "Peak Energy",
       value: peakEnergy.toFixed(1),
-      change: "max",
+      change: "max intensity",
       icon: Activity,
     },
     {
-      label: "Movement Range",
-      value: "Pseudo-3D",
-      change: "tracked",
-      icon: Move3D,
-    },
-    {
-      label: "Pose Model",
-      value: "MediaPipe",
-      change: "active",
+      label: "Avg Energy",
+      value: avgEnergy.toFixed(1),
+      change: "per frame",
       icon: TrendingUp,
     },
     {
+      label: "High Intensity",
+      value: `${highIntensityRatio.toFixed(0)}%`,
+      change: "of frames",
+      icon: Move3D,
+    },
+    {
       label: "Frames",
-      value: String(totalMoves),
+      value: String(totalFrames),
       change: "analyzed",
       icon: FileText,
     },
@@ -271,41 +299,36 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
               </h3>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={energyData}>
+                  <ComposedChart data={energyData}>
                     <defs>
-                      <linearGradient
-                        id="energyGradient"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="5%"
-                          stopColor="#ff6b9d"
-                          stopOpacity={0.3}
-                        />
-                        <stop
-                          offset="95%"
-                          stopColor="#ff6b9d"
-                          stopOpacity={0}
-                        />
+                      <linearGradient id="upperGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#ff6b9d" stopOpacity={0.35} />
+                        <stop offset="95%" stopColor="#ff6b9d" stopOpacity={0} />
+                      </linearGradient>
+
+                      <linearGradient id="lowerGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#4ecdc4" stopOpacity={0.35} />
+                        <stop offset="95%" stopColor="#4ecdc4" stopOpacity={0} />
                       </linearGradient>
                     </defs>
+
                     <CartesianGrid
                       strokeDasharray="3 3"
                       stroke="rgba(255,255,255,0.1)"
                     />
+
                     <XAxis
                       dataKey="time"
                       stroke="rgba(255,255,255,0.3)"
                       tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 10 }}
-                      tickFormatter={(value) => `${value}s`}
+                      tickFormatter={(value) => `${Number(value).toFixed(1)}s`}
                     />
+
                     <YAxis
                       stroke="rgba(255,255,255,0.3)"
                       tick={{ fill: "rgba(255,255,255,0.5)", fontSize: 10 }}
                     />
+
                     <Tooltip
                       contentStyle={{
                         backgroundColor: "rgba(0,0,0,0.8)",
@@ -313,24 +336,42 @@ export function AnalysisPage({ onBack }: AnalysisPageProps) {
                         borderRadius: "8px",
                       }}
                       labelStyle={{ color: "white" }}
+                      formatter={(value: number, name: string) => [
+                        Number(value).toFixed(2),
+                        name,
+                      ]}
+                      labelFormatter={(label) => `Time: ${Number(label).toFixed(2)}s`}
                     />
+
+                    <Legend />
+
                     <Area
+                      type="monotone"
+                      dataKey="upper_energy"
+                      name="Upper Body"
+                      stroke="#ff6b9d"
+                      strokeWidth={2}
+                      fill="url(#upperGradient)"
+                    />
+
+                    <Area
+                      type="monotone"
+                      dataKey="lower_energy"
+                      name="Lower Body"
+                      stroke="#4ecdc4"
+                      strokeWidth={2}
+                      fill="url(#lowerGradient)"
+                    />
+
+                    <Line
                       type="monotone"
                       dataKey="total_energy"
                       name="Total Energy"
-                      stroke="#ff6b9d"
+                      stroke="#ffffff"
                       strokeWidth={2}
-                      fill="url(#energyGradient)"
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="average"
-                      name="Average"
-                      stroke="rgba(255,255,255,0.3)"
-                      strokeDasharray="5 5"
                       dot={false}
                     />
-                  </AreaChart>
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
             </motion.div>

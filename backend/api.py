@@ -165,7 +165,7 @@ async def upload_video(file: UploadFile = File(...)):
         "output/fancam_web.mp4",
         "output/analysis/energy_graph.png",
         "output/analysis/angle_graph.png",
-        "output/analysis/trajectory_3d.png",
+        "output/analysis/position_heatmap.png",
         "output/analysis/motion_report.txt",
         "output/faces/faces_meta.json",
         "selected_member.json",
@@ -823,7 +823,8 @@ def run_process_task(face_id: int):
             "output/fancam_web.mp4",
             "output/analysis/energy_graph.png",
             "output/analysis/angle_graph.png",
-            "output/analysis/trajectory_3d.png",
+            "output/analysis/position_heatmap.png",
+            "output/analysis/stage_position.csv",
             "output/analysis/motion_report.txt",
         ]
 
@@ -879,7 +880,7 @@ def run_process_task(face_id: int):
 
         print("face_match time:", round(time.time() - start, 2), "sec")
 
-        update_status(55, "Fancam generated", done=False, error=None)
+        update_status(50, "Fancam generated", done=False, error=None)
 
         if not os.path.exists("output/fancam.mp4") or os.path.getsize("output/fancam.mp4") == 0:
             raise Exception("fancam.mp4 was not created or is empty")
@@ -976,11 +977,14 @@ def get_analysis_results():
         with open(report_path, "r", encoding="utf-8") as f:
             report_text = f.read()
 
+    heatmap_url = "http://127.0.0.1:8000/output/analysis/position_heatmap.png"
+
     return {
         "message": "analysis results",
         "energy_graph": "http://127.0.0.1:8000/output/analysis/energy_graph.png",
         "angle_graph": "http://127.0.0.1:8000/output/analysis/angle_graph.png",
-        "heatmap_graph": "http://127.0.0.1:8000/output/analysis/position_heatmap.png",
+        "heatmap_graph": heatmap_url,
+        "trajectory_graph": heatmap_url,
         "report": report_text
     }
 

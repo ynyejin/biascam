@@ -10,7 +10,7 @@ st.set_page_config(
 FANCAM_PATH = "output/fancam.mp4"
 ENERGY_GRAPH_PATH = "output/analysis/energy_graph.png"
 ANGLE_GRAPH_PATH = "output/analysis/angle_graph.png"
-TRAJECTORY_3D_PATH = "output/analysis/trajectory_3d.png"
+HEATMAP_GRAPH_PATH = "output/analysis/position_heatmap.png"
 REPORT_PATH = "output/analysis/motion_report.txt"
 
 st.title("🎥 BiasCam")
@@ -29,7 +29,7 @@ required_files = [
     FANCAM_PATH,
     ENERGY_GRAPH_PATH,
     ANGLE_GRAPH_PATH,
-    TRAJECTORY_3D_PATH,
+    HEATMAP_GRAPH_PATH,
     REPORT_PATH,
 ]
 
@@ -79,8 +79,8 @@ with col2:
     st.subheader("관절 각도 그래프")
     st.image(ANGLE_GRAPH_PATH, use_container_width=True)
 
-st.subheader("Pseudo-3D 관절 궤적")
-st.image(TRAJECTORY_3D_PATH, use_container_width=True)
+st.subheader("HEATMAP 그래프")
+st.image(HEATMAP_GRAPH_PATH, use_container_width=True)
 
 st.divider()
 

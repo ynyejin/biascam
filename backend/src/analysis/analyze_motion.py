@@ -19,7 +19,6 @@ HEATMAP_GRAPH_PATH = f"{OUTPUT_DIR}/position_heatmap.png"
 
 ORIGINAL_VIDEO_PATH = "data/input/uploaded_video.mp4"
 STAGE_POSITION_CSV_PATH = f"{OUTPUT_DIR}/stage_position.csv"
-HEATMAP_GRAPH_PATH = f"{OUTPUT_DIR}/position_heatmap.png"
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
