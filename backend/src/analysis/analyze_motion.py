@@ -264,6 +264,10 @@ def plot_energy_graph(energy_rows):
 
 
 def plot_angle_graph(angle_rows):
+    if not angle_rows:
+        print("각도 그래프 생성 실패: angle 데이터 없음")
+        return
+
     angle_data = {}
 
     for frame, time, joint, angle in angle_rows:
@@ -528,15 +532,6 @@ def run_motion_analysis(video_path=INPUT_VIDEO_PATH):
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    ret, first_frame = cap.read()
-
-    if ret:
-        first_frame = first_frame.copy()
-    else:
-        first_frame = None
-
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     pose_rows = []
     energy_rows = []
